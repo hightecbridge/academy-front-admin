@@ -562,3 +562,21 @@ textarea.input-field { resize: none; height: 90px; }
     background: linear-gradient(135deg, #1E1B4B, #2D2A6E);
   }
 }
+
+/* ── 로그인/회원가입 공통 ── */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+/* input focus 보라색 ring */
+.auth-input:focus {
+  border-color: var(--acc) !important;
+  box-shadow: 0 0 0 3px rgba(108,99,255,0.12) !important;
+  background: var(--bg1) !important;
+}
+
+/* 로그아웃 버튼 hover */
+.sidebar-footer button:hover {
+  background: rgba(240,68,56,0.2) !important;
+}

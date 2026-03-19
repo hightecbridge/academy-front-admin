@@ -1,6 +1,6 @@
 // src/store/dataStore.ts
 import { create } from 'zustand'
-import type { Parent, ClassRoom, AttendSheet, AttendRecord, AttendStatus, NoticeItem, SenderNumber, CalendarEvent } from '../types'
+import type { Parent, ClassRoom, AttendSheet, AttendRecord, AttendStatus, NoticeItem, SenderNumber, CalendarEvent, HomeworkSheet, HomeworkRecord } from '../types'
 
 interface DataState {
   parents: Parent[]
@@ -30,6 +30,11 @@ interface DataState {
   attendSheets: AttendSheet[]
   saveAttendSheet: (cid: number, date: string, records: AttendRecord[]) => void
   deleteAttendSheet: (sheetId: string) => void
+  // 숙제
+  homeworkSheets: HomeworkSheet[]
+  saveHomeworkSheet: (cid: number, date: string, title: string, records: HomeworkRecord[]) => void
+  deleteHomeworkSheet: (id: string) => void
+  updateHomeworkRecord: (sheetId: string, sid: number, done: boolean, comment: string) => void
 }
 
 const initClasses: ClassRoom[] = [
@@ -220,6 +225,33 @@ export const useDataStore = create<DataState>((set) => ({
 
   deleteAttendSheet: (sheetId) =>
     set((state) => ({ attendSheets: state.attendSheets.filter((s) => s.id !== sheetId) })),
+
+  // ── 숙제 관리 ──────────────────────────────────────
+  homeworkSheets: [],
+
+  saveHomeworkSheet: (cid, date, title, records) =>
+    set((state) => {
+      const id = `hw_${cid}_${date}`
+      const now = new Date().toISOString().slice(0, 10)
+      const existing = state.homeworkSheets.find((s) => s.id === id)
+      if (existing) {
+        return { homeworkSheets: state.homeworkSheets.map((s) => s.id === id ? { ...s, title, records } : s) }
+      }
+      return { homeworkSheets: [...state.homeworkSheets, { id, cid, date, title, records, createdAt: now }] }
+    }),
+
+  deleteHomeworkSheet: (id) =>
+    set((state) => ({ homeworkSheets: state.homeworkSheets.filter((s) => s.id !== id) })),
+
+  updateHomeworkRecord: (sheetId, sid, done, comment) =>
+    set((state) => ({
+      homeworkSheets: state.homeworkSheets.map((s) =>
+        s.id !== sheetId ? s : {
+          ...s,
+          records: s.records.map((r) => r.sid === sid ? { ...r, done, comment } : r),
+        }
+      ),
+    })),
 
   deleteClass: (cid) =>
     set((state) => ({

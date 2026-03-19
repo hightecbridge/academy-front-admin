@@ -1,6 +1,7 @@
 // src/components/layout/Layout.tsx
 import type { ReactNode } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useAuthStore } from '../../store/authStore'
 
 const GROUPS = [
   { label: '관리', items: [
@@ -36,7 +37,15 @@ function Icon({ name, active }: { name: string; active: boolean }) {
 export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
+  const { user, logout } = useAuthStore()
   const base = '/' + pathname.split('/')[1]
+
+  const handleLogout = () => {
+    if (window.confirm('로그아웃 하시겠습니까?')) {
+      logout()
+      navigate('/login', { replace: true })
+    }
+  }
 
   return (
     <div className="app-shell">
@@ -45,13 +54,13 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* 로고 */}
         <div className="sidebar-logo">
           <div className="sidebar-logo-icon">
-            {/* HiClass 'H' 모양 아이콘 */}
+            {/* Hi Academy 'H' 모양 아이콘 */}
             <svg viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M4 5v14M4 12h16M20 5v14"/>
             </svg>
           </div>
           <div>
-            <div className="sidebar-logo-text">HiClass</div>
+            <div className="sidebar-logo-text">Hi<span style={{color:"#A78BFA"}}>Academy</span></div>
             <div className="sidebar-logo-sub">학원 관리 시스템</div>
           </div>
         </div>
@@ -75,19 +84,57 @@ export default function Layout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        {/* 푸터 */}
+        {/* 푸터 — 사용자 정보 + 로그아웃 */}
         <div className="sidebar-footer">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(167,139,250,.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg style={{ width: 14, height: 14, stroke: 'rgba(255,255,255,.7)', fill: 'none', strokeWidth: 2, strokeLinecap: 'round' }} viewBox="0 0 24 24">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>
-              </svg>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer', borderRadius: 10, padding: '6px 4px', transition: 'background .12s' }}
+            onClick={() => navigate('/profile')}
+            title="회원정보 관리"
+          >
+            {/* 프로필 아바타 or 이미지 */}
+            <div style={{ width: 34, height: 34, borderRadius: 10, overflow: 'hidden', flexShrink: 0, background: 'linear-gradient(135deg,#A78BFA,#6C63FF)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid rgba(255,255,255,0.15)' }}>
+              {user?.profileImage
+                ? <img src={user.profileImage} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                : <span style={{ color: '#fff', fontSize: 14, fontWeight: 800 }}>{(user?.name ?? '관')[0]}</span>
+              }
             </div>
-            <div>
-              <div className="sidebar-footer-name">관리자</div>
-              <div className="sidebar-footer-sub">HiClass v1.0</div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="sidebar-footer-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {user?.name ?? '관리자'}
+              </div>
+              {/* 학원 로고 + 학원명 */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                {user?.academyLogo && (
+                  <img src={user.academyLogo} alt="" style={{ width: 14, height: 14, borderRadius: 3, objectFit: 'cover', flexShrink: 0 }} />
+                )}
+                <div className="sidebar-footer-sub" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {user?.academyName ?? 'Hi Academy'}
+                </div>
+              </div>
             </div>
+            {/* 설정 아이콘 */}
+            <svg style={{ width: 14, height: 14, stroke: 'rgba(255,255,255,.3)', fill: 'none', strokeWidth: 2, strokeLinecap: 'round', flexShrink: 0 }} viewBox="0 0 24 24">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            </svg>
           </div>
+          <button
+            onClick={handleLogout}
+            style={{
+              width: '100%', padding: '7px 0', borderRadius: 8,
+              background: 'rgba(240,68,56,0.12)', color: '#F87171',
+              border: '1px solid rgba(240,68,56,0.2)',
+              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            <svg style={{ width: 13, height: 13, stroke: '#F87171', fill: 'none', strokeWidth: 2, strokeLinecap: 'round' }} viewBox="0 0 24 24">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+            로그아웃
+          </button>
         </div>
       </aside>
 
@@ -96,7 +143,7 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* 모바일 상태바 */}
         <div className="status-bar">
           <span>9:41</span>
-          <span style={{ fontWeight: 800, letterSpacing: '-0.3px' }}>HiClass</span>
+          <span style={{ fontWeight: 800, letterSpacing: '-0.3px' }}>Hi<span style={{color:"#A78BFA"}}>Academy</span></span>
           <span>100%</span>
         </div>
 

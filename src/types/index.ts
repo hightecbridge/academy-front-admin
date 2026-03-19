@@ -88,6 +88,22 @@ export interface SenderNumber {
   isDefault: boolean
 }
 
+// ── 숙제 관리 ──────────────────────────────────────
+export interface HomeworkRecord {
+  sid: number        // 학생 ID
+  done: boolean      // 완료 여부
+  comment: string    // 코멘트 (선생님 메모)
+}
+
+export interface HomeworkSheet {
+  id: string         // `hw_${cid}_${date}`
+  cid: number
+  date: string       // 'YYYY-MM-DD'
+  title: string      // 숙제 제목 (예: '교재 p.34~36 풀기')
+  records: HomeworkRecord[]
+  createdAt: string
+}
+
 export type EventCategory = '수업' | '시험' | '휴일' | '행사' | '상담' | '기타'
 
 export interface CalendarEvent {

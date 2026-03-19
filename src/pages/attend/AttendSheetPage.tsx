@@ -300,6 +300,13 @@ export default function AttendSheetPage() {
           >
             {saved ? '✓ 저장됨' : '출석부 저장'}
           </button>
+          <button
+            className="btn-secondary"
+            style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
+            onClick={() => navigate(`/attend/${cid}/homework`)}
+          >
+            📝 이 날짜 숙제 관리
+          </button>
           {!isToday && (
             <div style={{ fontSize: 12, color: 'var(--slate3)', textAlign: 'center', marginTop: 8 }}>
               과거 날짜의 출석부를 수정 중입니다.
