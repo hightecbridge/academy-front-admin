@@ -38,7 +38,7 @@ export default function HomeworkPage() {
   const tabs = classes.map((c) => c.name)
   const currentCls = classes[tabIdx]
 
-  const stuInClass = allStudents.filter((s) => s.cls === currentCls?.name ?? '')
+  const stuInClass = allStudents.filter((s) => s.cls === (currentCls?.name ?? ''))
   const clsSheets = homeworkSheets
     .filter((s) => s.cid === currentCls?.cid)
     .sort((a, b) => b.date.localeCompare(a.date))
