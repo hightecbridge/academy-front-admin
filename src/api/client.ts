@@ -1,9 +1,9 @@
 // src/api/client.ts — Axios 기반 API 클라이언트
 import axios from 'axios'
+import { ACADEMY_API_BASE_PATH } from '../config/apiBase'
 
 const client = axios.create({
-//  baseURL: '/api',
-  baseURL: 'https://api.dbridgehub.com/api',
+  baseURL: import.meta.env.VITE_API_BASE_URL ?? ACADEMY_API_BASE_PATH,
   timeout: 10000,
 })
 

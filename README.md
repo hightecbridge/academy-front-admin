@@ -49,7 +49,7 @@ src/
 
 ## 백엔드 연동
 
-vite.config.ts 프록시: `/api` → `http://localhost:8080`
+vite.config.ts 프록시: `/api/academy` → `http://localhost:8080`
 
 현재는 Zustand mock 데이터 사용.
 실제 연동 시 dataStore의 함수를 TanStack Query mutationFn으로 교체.
