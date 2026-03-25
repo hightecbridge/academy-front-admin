@@ -151,16 +151,26 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
     }
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!name.trim()) { alert('학생 이름을 입력하세요.'); return }
     if (mode === 'add' && p) {
-      addStudent(p.pid, {
-        name, birth, grade, cls, status,
-        fees: {
-          tuition: { label: '수업료', amount: Number(tuition), paid: false },
-          book: { label: '교재비', amount: Number(book), paid: false },
-        },
-      })
+      const clsData = classes.find((c) => c.name === cls)
+      if (!clsData) {
+        alert('반 정보를 찾을 수 없습니다. 반을 다시 선택해주세요.')
+        return
+      }
+      try {
+        await addStudent(p.pid, {
+          name: name.trim(),
+          grade,
+          classroomId: clsData.cid,
+          status,
+        })
+      } catch (e: any) {
+        const msg = e?.response?.data?.message ?? '학생 추가에 실패했습니다.'
+        alert(msg)
+        return
+      }
     }
     alert(mode === 'add' ? '학생이 추가되었습니다.' : '저장되었습니다.')
     navigate(`/parents/${pid}`)
@@ -255,6 +265,8 @@ export function ParentFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const navigate = useNavigate()
   const parents = useDataStore((s) => s.parents)
   const classes = useDataStore((s) => s.classes)
+  const addParent = useDataStore((s) => s.addParent)
+  const addStudent = useDataStore((s) => s.addStudent)
   const p = mode === 'edit' ? parents.find((x) => x.pid === Number(pid)) : undefined
 
   const [name, setName] = useState(p?.name ?? '')
@@ -265,6 +277,50 @@ export function ParentFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const [stuCls, setStuCls] = useState('선택 안함')
 
   const title = mode === 'add' ? '학부모 등록' : '학부모 수정'
+
+  const handleSubmit = async () => {
+    if (mode !== 'add') {
+      alert('수정 기능은 아직 준비 중입니다.')
+      return
+    }
+    if (!name.trim()) {
+      alert('학부모 이름을 입력해주세요.')
+      return
+    }
+    if (!phone.trim()) {
+      alert('전화번호를 입력해주세요.')
+      return
+    }
+
+    try {
+      await addParent({
+        name: name.trim(),
+        phone: phone.trim(),
+        loginPhone: phone.trim(),
+        loginPassword: '0000',
+      })
+
+      // 첫 번째 학생 등록이 입력된 경우에만 추가 등록
+      if (stuName.trim() && stuGrade !== '선택 안함' && stuCls !== '선택 안함') {
+        const latestParent = useDataStore.getState().parents[0]
+        const cls = classes.find((c) => c.name === stuCls)
+        if (latestParent && cls) {
+          await addStudent(latestParent.pid, {
+            name: stuName.trim(),
+            grade: stuGrade,
+            classroomId: cls.cid,
+            status: '재원',
+          })
+        }
+      }
+
+      alert('등록되었습니다.')
+      navigate('/parents')
+    } catch (e: any) {
+      const msg = e?.response?.data?.message ?? '학부모 등록에 실패했습니다.'
+      alert(msg)
+    }
+  }
 
   return (
     <>
@@ -323,10 +379,7 @@ export function ParentFormPage({ mode }: { mode: 'add' | 'edit' }) {
 
           <button
             className="btn-primary"
-            onClick={() => {
-              alert(mode === 'add' ? '등록되었습니다.' : '저장되었습니다.')
-              navigate('/parents')
-            }}
+            onClick={handleSubmit}
           >
             {mode === 'add' ? '등록 완료' : '저장'}
           </button>

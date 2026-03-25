@@ -11,7 +11,8 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        // IPv6/localhost 해석 차이로 인한 ECONNREFUSED 가능성 방지
+        target: 'http://127.0.0.1:8080',
         changeOrigin: true,
       },
     },

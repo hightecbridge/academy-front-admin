@@ -2,13 +2,19 @@
 import React, { useState, useRef } from 'react'
 import { TopBar, TabBar, Badge, useToast, Toast } from '../../components/common'
 import { useDataStore, isFullPaid } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
 
 export default function MessagePage() {
   const [tabIdx, setTabIdx] = useState(0)
   const [msg, setMsg] = useState('')
+  const user = useAuthStore((s) => s.user)
   const parents = useDataStore((s) => s.parents)
   const classes = useDataStore((s) => s.classes)
   const senderNumbers = useDataStore((s) => s.senderNumbers)
+  const fetchSenderNumbers = useDataStore((s) => s.fetchSenderNumbers)
+  const messageSends = useDataStore((s) => s.messageSends)
+  const fetchMessageSends = useDataStore((s) => s.fetchMessageSends)
+  const saveMessageSendLog = useDataStore((s) => s.saveMessageSendLog)
   const addSenderNumber = useDataStore((s) => s.addSenderNumber)
   const deleteSenderNumber = useDataStore((s) => s.deleteSenderNumber)
   const setDefaultSender = useDataStore((s) => s.setDefaultSender)
@@ -24,11 +30,35 @@ export default function MessagePage() {
   const selectedClasses = clsCounts.filter((_, i) => chips[i])
   const selectedCount = selectedClasses.reduce((a, c) => a + c.n, 0)
 
-  const defaultSender = senderNumbers.find((s) => s.isDefault) ?? senderNumbers[0]
+  // 회원정보(원장) 전화번호는 기본 발신번호로 우선 노출
+  const ownerPhone = user?.phone?.trim()
+  const ownerSender = ownerPhone
+    ? { id: -1, label: '원장', number: ownerPhone, isDefault: true }
+    : null
+
+  const senderOptions = ownerSender
+    ? [ownerSender, ...senderNumbers.filter((s) => s.number !== ownerPhone)]
+    : senderNumbers
+
+  const defaultSender = senderOptions.find((s) => s.isDefault) ?? senderOptions[0]
   const [selectedSenderId, setSelectedSenderId] = useState<number>(defaultSender?.id ?? 0)
+  React.useEffect(() => {
+    if (senderOptions.length === 0) {
+      setSelectedSenderId(0)
+      return
+    }
+    if (!senderOptions.some((s) => s.id === selectedSenderId)) {
+      setSelectedSenderId(defaultSender?.id ?? senderOptions[0].id)
+    }
+  }, [senderOptions, selectedSenderId, defaultSender])
   const [showSenderMgmt, setShowSenderMgmt] = useState(false)
   const [newLabel, setNewLabel] = useState('')
   const [newNumber, setNewNumber] = useState('')
+
+  React.useEffect(() => {
+    void fetchSenderNumbers()
+    void fetchMessageSends()
+  }, [fetchSenderNumbers, fetchMessageSends])
 
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -51,44 +81,107 @@ export default function MessagePage() {
     })
   }
 
-  const HIST = [
-    { title: '수업 변경 안내', cnt: 28, date: '3/10 14:32', bdg: 'badge-blue', cls: classes[0]?.name ?? 'A반' },
-    { title: '3월 수업료 납부 안내', cnt: parents.length, date: '3/01 09:00', bdg: 'badge-gray', cls: '전체' },
-    { title: '카드결제 완료 안내', cnt: 12, date: '2/28 15:00', bdg: 'badge-amber', cls: '결제' },
-  ]
+  const msgTitle = (text: string) => {
+    const t = text.trim()
+    if (!t) return '(내용 없음)'
+    const line = t.split(/\r?\n/)[0]?.trim() ?? ''
+    return line.length > 80 ? `${line.slice(0, 80)}…` : line
+  }
+
+  const formatLogDate = (iso: string) => {
+    if (!iso) return ''
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+
+  const kindBadge = (kind: string) => {
+    if (kind === 'CLASS') return 'badge-blue'
+    if (kind === 'ALL') return 'badge-gray'
+    return 'badge-amber'
+  }
+
+  const histClass = messageSends.filter((h) => h.kind === 'CLASS')
+  const histAll = messageSends.filter((h) => h.kind === 'ALL')
+  const histPay = messageSends.filter((h) => h.kind === 'PAYMENT')
 
   // 발신번호 바텀시트
-  const SenderMgmt = () => (
+  const newNumberInputRef = useRef<HTMLInputElement>(null)
+  const senderMgmtUI = (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(16,24,40,0.5)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', zIndex: 500 }}>
       <div style={{ background: 'var(--bg1)', borderRadius: '20px 20px 0 0', padding: '20px 16px 32px', maxHeight: '75%', overflowY: 'auto' }}>
         <div className="row" style={{ marginBottom: 16 }}>
           <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--navy)' }}>발신번호 관리</span>
-          <button onClick={() => setShowSenderMgmt(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--slate3)', lineHeight: 1 }}>×</button>
+          <button
+            onClick={() => setShowSenderMgmt(false)}
+            style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: 'var(--slate3)', lineHeight: 1 }}
+          >
+            ×
+          </button>
         </div>
         {senderNumbers.map((s) => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', marginBottom: 8, background: 'var(--bg2)', borderRadius: 10, border: s.isDefault ? '1.5px solid var(--acc)' : '1px solid var(--border)' }}>
+          <div
+            key={s.id}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '12px 14px',
+              marginBottom: 8,
+              background: 'var(--bg2)',
+              borderRadius: 10,
+              border: s.isDefault ? '1.5px solid var(--acc)' : '1px solid var(--border)',
+            }}
+          >
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{s.label}</div>
               <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 1 }}>{s.number}</div>
             </div>
             {s.isDefault
               ? <span className="badge badge-blue">기본</span>
-              : <button onClick={() => setDefaultSender(s.id)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg3)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}>기본 설정</button>}
-            {!s.isDefault && (
-              <button onClick={() => deleteSenderNumber(s.id)} style={{ background: 'none', border: 'none', color: 'var(--err)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
+              : s.id !== -1
+                ? <button onClick={() => void setDefaultSender(s.id).catch(() => {})} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg3)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}>기본 설정</button>
+                : null}
+            {!s.isDefault && s.id !== -1 && (
+              <button onClick={() => void deleteSenderNumber(s.id).catch(() => {})} style={{ background: 'none', border: 'none', color: 'var(--err)', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
             )}
           </div>
         ))}
         <div style={{ marginTop: 14, padding: 14, background: 'var(--bg3)', borderRadius: 10, border: '1px solid var(--border)' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--slate2)', marginBottom: 8 }}>새 발신번호 추가</div>
-          <input className="input-field" style={{ marginTop: 0 }} placeholder="구분 (예: 원장, 담당교사)" value={newLabel} onChange={(e) => setNewLabel(e.target.value)} />
-          <input className="input-field" type="tel" placeholder="010-0000-0000" value={newNumber} onChange={(e) => setNewNumber(e.target.value)} />
-          <button className="btn-primary" onClick={() => {
-            if (!newLabel.trim() || !newNumber.trim()) { alert('구분과 번호를 모두 입력하세요.'); return }
-            addSenderNumber({ label: newLabel, number: newNumber, isDefault: false })
-            setNewLabel(''); setNewNumber('')
-            showToast('발신번호가 추가되었습니다.')
-          }}>추가</button>
+          <input
+            className="input-field"
+            style={{ marginTop: 0 }}
+            placeholder="구분 (예: 원장, 담당교사)"
+            value={newLabel}
+            onChange={(e) => setNewLabel(e.target.value)}
+          />
+          <input
+            ref={newNumberInputRef}
+            className="input-field"
+            type="tel"
+            placeholder="010-0000-0000"
+            value={newNumber}
+            onChange={(e) => setNewNumber(e.target.value)}
+          />
+          <button
+            className="btn-primary"
+            onClick={async () => {
+              if (!newLabel.trim() || !newNumber.trim()) { alert('구분과 번호를 모두 입력하세요.'); return }
+              try {
+                await addSenderNumber({ label: newLabel, number: newNumber, isDefault: false })
+                setNewLabel('')
+                setNewNumber('')
+                showToast('발신번호가 추가되었습니다.')
+                // 연속 입력을 위해 다시 커서 복귀
+                setTimeout(() => newNumberInputRef.current?.focus(), 0)
+              } catch (e: any) {
+                alert(e?.response?.data?.message ?? e?.message ?? '발신번호 저장에 실패했습니다.')
+              }
+            }}
+          >
+            추가
+          </button>
         </div>
       </div>
     </div>
@@ -100,12 +193,12 @@ export default function MessagePage() {
       <div className="sec-title">발신 번호</div>
       <div style={{ background: 'var(--bg2)', borderRadius: 10, border: '1px solid var(--border)', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          {senderNumbers.length === 0
+          {senderOptions.length === 0
             ? <span style={{ fontSize: 13, color: 'var(--slate3)' }}>등록된 발신번호 없음</span>
             : (
               <select style={{ background: 'none', border: 'none', fontSize: 14, fontWeight: 600, color: 'var(--navy)', cursor: 'pointer', outline: 'none' }}
                 value={selectedSenderId} onChange={(e) => setSelectedSenderId(Number(e.target.value))}>
-                {senderNumbers.map((s) => (
+                {senderOptions.map((s) => (
                   <option key={s.id} value={s.id}>{s.label} ({s.number}){s.isDefault ? ' ★' : ''}</option>
                 ))}
               </select>
@@ -178,19 +271,40 @@ export default function MessagePage() {
               <button className="btn-primary"
                 disabled={selectedCount === 0 || msg.trim().length === 0}
                 style={{ opacity: (selectedCount === 0 || msg.trim().length === 0) ? 0.5 : 1 }}
-                onClick={() => { showToast(`${selectedClasses.map((c) => c.name).join('·')} ${selectedCount}명에게 발송 완료`); setMsg(''); setImagePreview(null) }}>
+                onClick={async () => {
+                  const targetLabel = selectedClasses.map((c) => c.name).join('·')
+                  try {
+                    await saveMessageSendLog({
+                      kind: 'CLASS',
+                      targetLabel,
+                      title: msgTitle(msg),
+                      bodyPreview: msg.trim().slice(0, 500),
+                      recipientCount: selectedCount,
+                    })
+                    showToast(`${targetLabel} ${selectedCount}명에게 발송 완료`)
+                    setMsg('')
+                    setImagePreview(null)
+                    await fetchMessageSends()
+                  } catch (e: any) {
+                    alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
+                  }
+                }}>
                 알림톡 발송 ({selectedCount}명)
               </button>
             </div>
             <div className="sec">
               <div className="sec-title">최근 발송 내역</div>
               <div className="card">
-                {HIST.filter((h) => h.cls !== '전체' && h.cls !== '결제').map((h, i) => (
-                  <div key={i} style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-                    <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={h.bdg}>{h.cls}</Badge></div>
-                    <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.cnt}명 · {h.date}</div>
-                  </div>
-                ))}
+                {histClass.length === 0 ? (
+                  <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--slate3)', fontSize: 13 }}>발송 내역이 없습니다</div>
+                ) : (
+                  histClass.map((h) => (
+                    <div key={h.id} style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div>
+                      <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -208,19 +322,39 @@ export default function MessagePage() {
               <button className="btn-primary"
                 disabled={msg.trim().length === 0}
                 style={{ opacity: msg.trim().length === 0 ? 0.5 : 1 }}
-                onClick={() => { showToast(`전체 ${parents.length}명에게 발송 완료`); setMsg(''); setImagePreview(null) }}>
+                onClick={async () => {
+                  try {
+                    await saveMessageSendLog({
+                      kind: 'ALL',
+                      targetLabel: '전체',
+                      title: msgTitle(msg),
+                      bodyPreview: msg.trim().slice(0, 500),
+                      recipientCount: parents.length,
+                    })
+                    showToast(`전체 ${parents.length}명에게 발송 완료`)
+                    setMsg('')
+                    setImagePreview(null)
+                    await fetchMessageSends()
+                  } catch (e: any) {
+                    alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
+                  }
+                }}>
                 전체 발송 ({parents.length}명)
               </button>
             </div>
             <div className="sec">
               <div className="sec-title">최근 발송 내역</div>
               <div className="card">
-                {HIST.filter((h) => h.cls === '전체').map((h, i) => (
-                  <div key={i} style={{ padding: '12px 16px' }}>
-                    <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={h.bdg}>{h.cls}</Badge></div>
-                    <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.cnt}명 · {h.date}</div>
-                  </div>
-                ))}
+                {histAll.length === 0 ? (
+                  <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--slate3)', fontSize: 13 }}>발송 내역이 없습니다</div>
+                ) : (
+                  histAll.map((h) => (
+                    <div key={h.id} style={{ padding: '12px 16px' }}>
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div>
+                      <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -266,7 +400,23 @@ export default function MessagePage() {
               )}
               {checkedUnpaid.size > 0 && (
                 <button className="btn-red" style={{ marginTop: 14 }}
-                  onClick={() => { showToast(`${checkedUnpaid.size}명에게 카드결제 문자 발송 완료`); setCheckedUnpaid(new Set()) }}>
+                  onClick={async () => {
+                    const n = checkedUnpaid.size
+                    try {
+                      await saveMessageSendLog({
+                        kind: 'PAYMENT',
+                        targetLabel: '결제',
+                        title: '카드결제 문자',
+                        bodyPreview: `미납 학부모 ${n}명 대상`,
+                        recipientCount: n,
+                      })
+                      showToast(`${n}명에게 카드결제 문자 발송 완료`)
+                      setCheckedUnpaid(new Set())
+                      await fetchMessageSends()
+                    } catch (e: any) {
+                      alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
+                    }
+                  }}>
                   선택 {checkedUnpaid.size}명에게 카드결제 문자 발송
                 </button>
               )}
@@ -274,12 +424,16 @@ export default function MessagePage() {
             <div className="sec">
               <div className="sec-title">최근 발송 내역</div>
               <div className="card">
-                {HIST.filter((h) => h.cls === '결제').map((h, i) => (
-                  <div key={i} style={{ padding: '12px 16px' }}>
-                    <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={h.bdg}>{h.cls}</Badge></div>
-                    <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.cnt}명 · {h.date}</div>
-                  </div>
-                ))}
+                {histPay.length === 0 ? (
+                  <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--slate3)', fontSize: 13 }}>발송 내역이 없습니다</div>
+                ) : (
+                  histPay.map((h) => (
+                    <div key={h.id} style={{ padding: '12px 16px' }}>
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div>
+                      <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -287,7 +441,7 @@ export default function MessagePage() {
 
       </div>
 
-      {showSenderMgmt && <SenderMgmt />}
+      {showSenderMgmt && senderMgmtUI}
       <Toast toastRef={toastRef} />
     </>
   )

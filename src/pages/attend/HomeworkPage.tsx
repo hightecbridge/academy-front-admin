@@ -1,5 +1,5 @@
 // src/pages/attend/HomeworkPage.tsx
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, TabBar, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
@@ -26,6 +26,7 @@ export default function HomeworkPage() {
   const saveHomeworkSheet   = useDataStore((s) => s.saveHomeworkSheet)
   const deleteHomeworkSheet = useDataStore((s) => s.deleteHomeworkSheet)
   const updateHomeworkRecord = useDataStore((s) => s.updateHomeworkRecord)
+  const fetchHomework = useDataStore((s) => s.fetchHomework)
   const { ref: toastRef, show: showToast } = useToast()
 
   const [tabIdx, setTabIdx] = useState(0)
@@ -33,18 +34,39 @@ export default function HomeworkPage() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10))
   const [hwTitle, setHwTitle] = useState('')
   const [editSheetId, setEditSheetId] = useState<string | null>(null)
+  const [sheetSearch, setSheetSearch] = useState('')
 
   const allStudents = parents.flatMap((p) => p.students)
   const tabs = classes.map((c) => c.name)
   const currentCls = classes[tabIdx]
 
-  const stuInClass = allStudents.filter((s) => s.cls === (currentCls?.name ?? ''))
+  const stuInClass = allStudents.filter((s) =>
+    (s.cls ?? '').trim() === (currentCls?.name ?? '').trim(),
+  )
   const clsSheets = homeworkSheets
     .filter((s) => s.cid === currentCls?.cid)
     .sort((a, b) => b.date.localeCompare(a.date))
 
-  // 현재 열린 시트
-  const currentSheet = editSheetId ? homeworkSheets.find((s) => s.id === editSheetId) : null
+  const filteredClsSheets = useMemo(() => {
+    const q = sheetSearch.trim().toLowerCase()
+    if (!q) return clsSheets
+    return clsSheets.filter((s) => {
+      const title = (s.title ?? '').toLowerCase()
+      const dateStr = (s.date ?? '').toLowerCase()
+      return title.includes(q) || dateStr.includes(q) || dateStr.replace(/-/g, '').includes(q.replace(/-/g, ''))
+    })
+  }, [clsSheets, sheetSearch])
+
+  // 반·탭 변경 시 서버에서 숙제 목록 로드 (기존에는 호출되지 않아 목록이 비어 있었음)
+  useEffect(() => {
+    const cid = classes[tabIdx]?.cid
+    if (cid != null) void fetchHomework(cid)
+  }, [classes, tabIdx, fetchHomework])
+
+  // 현재 열린 시트 (id는 문자열/숫자 혼용 대비)
+  const currentSheet = editSheetId
+    ? homeworkSheets.find((s) => String(s.id) === String(editSheetId))
+    : null
 
   // 로컬 레코드 편집 상태
   const [localRecords, setLocalRecords] = useState<HomeworkRecord[]>([])
@@ -52,9 +74,12 @@ export default function HomeworkPage() {
 
   useEffect(() => {
     if (currentSheet) {
-      setLocalRecords(currentSheet.records)
+      setLocalRecords(currentSheet.records.map((r) => ({
+        ...r,
+        sid: Number(r.sid),
+      })))
     }
-  }, [editSheetId])
+  }, [editSheetId, currentSheet])
 
   if (!currentCls) {
     return (
@@ -71,10 +96,10 @@ export default function HomeworkPage() {
 
   // ── 시트 열기 ──────────────────────────────────────
   const openSheet = (sheetId: string) => {
-    const sheet = homeworkSheets.find((s) => s.id === sheetId)
+    const sheet = homeworkSheets.find((s) => String(s.id) === String(sheetId))
     if (!sheet) return
-    setEditSheetId(sheetId)
-    setLocalRecords(sheet.records)
+    setEditSheetId(String(sheet.id))
+    setLocalRecords(sheet.records.map((r) => ({ ...r, sid: Number(r.sid) })))
     setOpenComment(null)
     setView('sheet')
   }
@@ -90,42 +115,73 @@ export default function HomeworkPage() {
     const records: HomeworkRecord[] = stuInClass.map((s) => ({
       sid: s.sid, done: false, comment: '',
     }))
-    saveHomeworkSheet(currentCls.cid, selectedDate, hwTitle, records)
-    showToast('숙제가 등록되었습니다.')
-    setHwTitle('')
-    // 바로 시트 열기
-    const newId = `hw_${currentCls.cid}_${selectedDate}`
-    setEditSheetId(newId)
-    setLocalRecords(records)
-    setOpenComment(null)
-    setView('sheet')
+    ;(async () => {
+      await saveHomeworkSheet(currentCls.cid, selectedDate, hwTitle, records)
+      showToast('숙제가 등록되었습니다.')
+      setHwTitle('')
+
+      // 저장 후 스토어에서 실제 시트 ID를 찾아 열기
+      const saved = useDataStore
+        .getState()
+        .homeworkSheets
+        .find((s) => s.cid === currentCls.cid && s.date === selectedDate)
+
+      if (!saved) {
+        showToast('등록은 완료되었지만 시트를 찾지 못했습니다. 목록에서 다시 열어주세요.')
+        setView('list')
+        return
+      }
+
+      setEditSheetId(String(saved.id))
+      setLocalRecords(saved.records.map((r) => ({ ...r, sid: Number(r.sid) })))
+      setOpenComment(null)
+      setView('sheet')
+    })()
   }
 
   // ── 체크/코멘트 저장 ──────────────────────────────
-  const toggleDone = (sid: number) => {
+  const toggleDone = async (sid: number) => {
     if (!editSheetId) return
-    const rec = localRecords.find((r) => r.sid === sid)
+    const sidNum = Number(sid)
+    const rec = localRecords.find((r) => Number(r.sid) === sidNum)
     if (!rec) return
     const next = { ...rec, done: !rec.done }
-    const updated = localRecords.map((r) => r.sid === sid ? next : r)
+    const updated = localRecords.map((r) => (Number(r.sid) === sidNum ? next : r))
     setLocalRecords(updated)
-    updateHomeworkRecord(editSheetId, sid, next.done, next.comment)
+    try {
+      await updateHomeworkRecord(editSheetId, sidNum, next.done, next.comment)
+    } catch {
+      showToast('저장에 실패했습니다.')
+    }
   }
 
-  const saveComment = (sid: number, comment: string) => {
+  const saveComment = async (sid: number, comment: string) => {
     if (!editSheetId) return
-    const updated = localRecords.map((r) => r.sid === sid ? { ...r, comment } : r)
+    const sidNum = Number(sid)
+    const updated = localRecords.map((r) => (Number(r.sid) === sidNum ? { ...r, comment } : r))
     setLocalRecords(updated)
-    updateHomeworkRecord(editSheetId, sid, localRecords.find((r) => r.sid === sid)?.done ?? false, comment)
+    const done = updated.find((r) => Number(r.sid) === sidNum)?.done ?? false
+    try {
+      await updateHomeworkRecord(editSheetId, sidNum, done, comment)
+    } catch {
+      showToast('코멘트 저장에 실패했습니다.')
+    }
     setOpenComment(null)
     showToast('코멘트가 저장되었습니다.')
   }
 
   const handleDelete = (id: string) => {
     if (!window.confirm('숙제를 삭제하시겠습니까?')) return
-    deleteHomeworkSheet(id)
-    showToast('삭제되었습니다.')
-    setView('list')
+    void (async () => {
+      try {
+        await deleteHomeworkSheet(id)
+        showToast('삭제되었습니다.')
+        setView('list')
+        setEditSheetId(null)
+      } catch {
+        showToast('삭제에 실패했습니다.')
+      }
+    })()
   }
 
   // ── 통계 ──────────────────────────────────────────
@@ -145,7 +201,7 @@ export default function HomeworkPage() {
   // VIEW: 숙제 시트 (체크 + 코멘트)
   // ═══════════════════════════════════════════════════
   if (view === 'sheet' && currentSheet) {
-    const stats = getStats(currentSheet)
+    const stats = getStats({ ...currentSheet, records: localRecords })
     const donePct = stats.pct
 
     return (
@@ -211,22 +267,36 @@ export default function HomeworkPage() {
           <div className="sec" style={{ paddingTop: 0 }}>
             <div style={{ display: 'flex', gap: 8 }}>
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (!editSheetId) return
-                  const all = localRecords.map((r) => { updateHomeworkRecord(editSheetId, r.sid, true, r.comment); return { ...r, done: true } })
+                  const all = localRecords.map((r) => ({ ...r, done: true }))
                   setLocalRecords(all)
-                  showToast('전체 완료 처리되었습니다.')
+                  try {
+                    await Promise.all(
+                      localRecords.map((r) => updateHomeworkRecord(editSheetId, r.sid, true, r.comment))
+                    )
+                    showToast('전체 완료 처리되었습니다.')
+                  } catch {
+                    showToast('전체 완료 처리에 실패했습니다.')
+                  }
                 }}
                 style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: '1.5px solid var(--ok)', background: 'var(--ok2)', color: 'var(--ok)', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
               >
                 ✓ 전체 완료
               </button>
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (!editSheetId) return
-                  const all = localRecords.map((r) => { updateHomeworkRecord(editSheetId, r.sid, false, r.comment); return { ...r, done: false } })
+                  const all = localRecords.map((r) => ({ ...r, done: false }))
                   setLocalRecords(all)
-                  showToast('전체 미완료 처리되었습니다.')
+                  try {
+                    await Promise.all(
+                      localRecords.map((r) => updateHomeworkRecord(editSheetId, r.sid, false, r.comment))
+                    )
+                    showToast('전체 미완료 처리되었습니다.')
+                  } catch {
+                    showToast('전체 미완료 처리에 실패했습니다.')
+                  }
                 }}
                 style={{ flex: 1, padding: '10px 0', borderRadius: 10, border: '1.5px solid var(--border)', background: 'var(--bg2)', color: 'var(--slate2)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
               >
@@ -239,7 +309,7 @@ export default function HomeworkPage() {
           <div className="sec" style={{ paddingTop: 0 }}>
             <div className="sec-title" style={{ marginBottom: 10 }}>학생별 완료 현황</div>
             {stuInClass.map((stu, idx) => {
-              const rec = localRecords.find((r) => r.sid === stu.sid) ?? { sid: stu.sid, done: false, comment: '' }
+              const rec = localRecords.find((r) => Number(r.sid) === Number(stu.sid)) ?? { sid: stu.sid, done: false, comment: '' }
               const isCommentOpen = openComment === stu.sid
               return (
                 <div
@@ -319,6 +389,7 @@ export default function HomeworkPage() {
                   {/* 코멘트 입력창 */}
                   {isCommentOpen && (
                     <CommentEditor
+                      key={stu.sid}
                       defaultValue={rec.comment}
                       studentName={stu.name}
                       onSave={(v) => saveComment(stu.sid, v)}
@@ -342,7 +413,7 @@ export default function HomeworkPage() {
     <>
       <TopBar
         title="숙제 관리"
-        sub={`${currentCls.name} · ${clsSheets.length}개`}
+        sub={`${currentCls.name} · 숙제 ${clsSheets.length}건`}
         onBack={() => navigate('/attend')}
         right={
           <button
@@ -365,7 +436,7 @@ export default function HomeworkPage() {
         { label: '숙제 관리' },
       ]} />
       {tabs.length > 0 && (
-        <TabBar tabs={tabs} active={tabIdx} onChange={(i) => { setTabIdx(i); setView('list') }} />
+        <TabBar tabs={tabs} active={tabIdx} onChange={(i) => { setTabIdx(i); setView('list'); setSheetSearch('') }} />
       )}
 
       <div className="page-content-body">
@@ -440,6 +511,16 @@ export default function HomeworkPage() {
         {/* 숙제 목록 */}
         <div className="sec" style={{ paddingTop: 0 }}>
           <div className="sec-title">숙제 목록</div>
+          {clsSheets.length > 0 && (
+            <input
+              type="search"
+              className="input-field"
+              placeholder="제목·날짜 검색 (예: 3월, 2025-03, 단어)"
+              value={sheetSearch}
+              onChange={(e) => setSheetSearch(e.target.value)}
+              style={{ marginBottom: 12, fontSize: 14 }}
+            />
+          )}
 
           {clsSheets.length === 0 && (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--slate3)', fontSize: 13 }}>
@@ -448,7 +529,13 @@ export default function HomeworkPage() {
             </div>
           )}
 
-          {clsSheets.map((sheet) => {
+          {clsSheets.length > 0 && filteredClsSheets.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '24px 0', color: 'var(--slate3)', fontSize: 13 }}>
+              검색 조건에 맞는 숙제가 없습니다.
+            </div>
+          )}
+
+          {filteredClsSheets.map((sheet) => {
             const stats = getStats(sheet)
             const dObj = new Date(sheet.date)
             const pctCol = stats.pct >= 80 ? 'var(--ok)' : stats.pct >= 60 ? 'var(--warn)' : 'var(--err)'
@@ -493,7 +580,7 @@ export default function HomeworkPage() {
                   {/* 학생 완료 아이콘 목록 */}
                   <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                     {stuInClass.map((stu) => {
-                      const rec = sheet.records.find((r) => r.sid === stu.sid)
+                      const rec = sheet.records.find((r) => Number(r.sid) === Number(stu.sid))
                       return (
                         <div
                           key={stu.sid}

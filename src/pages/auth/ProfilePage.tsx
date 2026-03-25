@@ -4,6 +4,17 @@ import { useNavigate } from 'react-router-dom'
 import { TopBar, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useAuthStore } from '../../store/authStore'
 
+function formatCreatedAt(value?: string) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return value
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  const h = String(d.getHours()).padStart(2, '0')
+  return `${y}-${m}-${day} ${h}시`
+}
+
 // ── 이미지 압축 헬퍼 ─────────────────────────────────
 function compressImage(file: File, maxSize = 800): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -134,25 +145,49 @@ export default function ProfilePage() {
   const [newPw2, setNewPw2] = useState('')
   const [pwErr,  setPwErr]  = useState('')
 
+  // user 상태 변경 시 폼 동기화 (저장 후 반영)
+  React.useEffect(() => {
+    if (!user) return
+    setName(user.name ?? '')
+    setPhone(user.phone ?? '')
+    setProfileImage(user.profileImage ?? '')
+    setAcademyName(user.academyName ?? '')
+    setAcademyLogo(user.academyLogo ?? '')
+    setAcademyAddress(user.academyAddress ?? '')
+    setAcademyDesc(user.academyDesc ?? '')
+  }, [user])
+
   if (!user) { navigate('/login'); return null }
 
   // ── 기본정보 저장 ──
-  const handleSaveInfo = () => {
+  const handleSaveInfo = async () => {
     if (!name.trim()) { showToast('이름을 입력해주세요.'); return }
-    updateProfile({ name, phone, profileImage: profileImage || undefined })
-    showToast('기본 정보가 저장되었습니다.')
+    const ok = await updateProfile({
+      name,
+      phone,
+      profileImage: profileImage || undefined,
+    })
+    if (ok) {
+      showToast('기본 정보가 저장되었습니다.')
+    } else {
+      showToast('저장에 실패했습니다. 다시 시도해주세요.')
+    }
   }
 
   // ── 학원정보 저장 ──
-  const handleSaveAcademy = () => {
+  const handleSaveAcademy = async () => {
     if (!academyName.trim()) { showToast('학원명을 입력해주세요.'); return }
-    updateProfile({
+    const ok = await updateProfile({
       academyName,
       academyLogo: academyLogo || undefined,
       academyAddress,
       academyDesc,
     })
-    showToast('학원 정보가 저장되었습니다. 학부모 앱에 즉시 반영됩니다.')
+    if (ok) {
+      showToast('학원 정보가 저장되었습니다. 학부모 앱에 즉시 반영됩니다.')
+    } else {
+      showToast('저장에 실패했습니다. 다시 시도해주세요.')
+    }
   }
 
   // ── 비밀번호 변경 ──
@@ -268,7 +303,7 @@ export default function ProfilePage() {
               <input className="input-field" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="010-0000-0000" />
 
               <label style={s.label}>가입일</label>
-              <input className="input-field" value={user.createdAt} disabled style={{ opacity: 0.55, cursor: 'not-allowed' }} />
+              <input className="input-field" value={formatCreatedAt(user.createdAt)} disabled style={{ opacity: 0.55, cursor: 'not-allowed' }} />
 
               <button className="btn-primary" onClick={handleSaveInfo}>기본 정보 저장</button>
             </div>

@@ -1,295 +1,573 @@
 // src/store/dataStore.ts
 import { create } from 'zustand'
-import type { Parent, ClassRoom, AttendSheet, AttendRecord, AttendStatus, NoticeItem, SenderNumber, CalendarEvent, HomeworkSheet, HomeworkRecord } from '../types'
+import client from '../api/client'
+import type {
+  Parent, ClassRoom, AttendSheet, AttendRecord,
+  AttendStatus, NoticeItem, CalendarEvent,
+  HomeworkSheet, HomeworkRecord, SenderNumber, MessageSendLog,
+} from '../types'
 
 interface DataState {
-  parents: Parent[]
-  classes: ClassRoom[]
-  toggleFee: (sid: number, key: 'tuition' | 'book', paid: boolean) => void
-  addStudent: (pid: number, student: Omit<import('../types').Student, 'sid'>) => void
-  deleteStudent: (pid: number, sid: number) => void
-  addClass: (cls: Omit<ClassRoom, 'cid' | 'createdAt'>) => void
-  updateClass: (cid: number, cls: Partial<Omit<ClassRoom, 'cid'>>) => void
-  deleteClass: (cid: number) => void
-  // 캘린더
-  events: CalendarEvent[]
-  addEvent: (e: Omit<CalendarEvent, 'id' | 'createdAt'>) => void
-  updateEvent: (id: number, e: Partial<Omit<CalendarEvent, 'id'>>) => void
-  deleteEvent: (id: number) => void
-  // 공지사항
-  notices: NoticeItem[]
-  addNotice: (n: Omit<NoticeItem, 'id' | 'createdAt'>) => void
-  deleteNotice: (id: number) => void
-  // 발신번호
-  senderNumbers: SenderNumber[]
-  addSenderNumber: (s: Omit<SenderNumber, 'id'>) => void
-  updateSenderNumber: (id: number, s: Partial<Omit<SenderNumber, 'id'>>) => void
-  deleteSenderNumber: (id: number) => void
-  setDefaultSender: (id: number) => void
-  // 출석
-  attendSheets: AttendSheet[]
-  saveAttendSheet: (cid: number, date: string, records: AttendRecord[]) => void
-  deleteAttendSheet: (sheetId: string) => void
-  // 숙제
+  parents:        Parent[]
+  classes:        ClassRoom[]
+  attendSheets:   AttendSheet[]
   homeworkSheets: HomeworkSheet[]
-  saveHomeworkSheet: (cid: number, date: string, title: string, records: HomeworkRecord[]) => void
-  deleteHomeworkSheet: (id: string) => void
-  updateHomeworkRecord: (sheetId: string, sid: number, done: boolean, comment: string) => void
+  notices:        NoticeItem[]
+  noticeTotal:    number
+  events:         CalendarEvent[]
+  senderNumbers:  SenderNumber[]
+  messageSends:   MessageSendLog[]
+  isLoading:      boolean
+
+  fetchClasses:   () => Promise<void>
+  fetchParents:   () => Promise<void>
+  fetchAttend:    (cid: number) => Promise<void>
+  fetchHomework:  (cid: number) => Promise<void>
+  fetchNotices:   (page?: number, size?: number, target?: string | null, q?: string) => Promise<void>
+  fetchEvents:    () => Promise<void>
+  fetchSenderNumbers: () => Promise<void>
+  fetchMessageSends:  () => Promise<void>
+  saveMessageSendLog: (p: {
+    kind: MessageSendLog['kind']
+    targetLabel: string
+    title: string
+    bodyPreview: string
+    recipientCount: number
+  }) => Promise<void>
+
+  addClass:    (cls: Omit<ClassRoom, 'cid' | 'createdAt'>) => Promise<void>
+  updateClass: (cid: number, cls: Partial<Omit<ClassRoom, 'cid'>>) => Promise<void>
+  deleteClass: (cid: number) => Promise<void>
+
+  addParent:   (p: { name: string; phone: string; loginPhone?: string; loginPassword?: string; badgeColor?: string; badgeTextColor?: string }) => Promise<void>
+  addStudent:  (pid: number, s: { name: string; grade: string; classroomId: number; status?: string }) => Promise<void>
+  deleteParent: (pid: number) => Promise<void>
+
+  toggleFee:   (sid: number, key: 'tuition' | 'book', paid: boolean, yearMonth?: number) => Promise<void>
+
+  saveAttendSheet:  (cid: number, date: string, records: AttendRecord[]) => Promise<void>
+  saveHomeworkSheet:(cid: number, date: string, title: string, records: HomeworkRecord[]) => Promise<void>
+  updateHomeworkRecord: (sheetId: string, sid: number, done: boolean, comment: string) => Promise<void>
+  deleteHomeworkSheet: (sheetId: string) => Promise<void>
+
+  addNotice:    (n: Omit<NoticeItem, 'id' | 'createdAt'>) => Promise<void>
+  deleteNotice: (id: number) => Promise<void>
+
+  addEvent:    (e: Omit<CalendarEvent, 'id' | 'createdAt'>) => Promise<void>
+  updateEvent: (id: number, e: Partial<Omit<CalendarEvent, 'id'>>) => Promise<void>
+  deleteEvent: (id: number) => Promise<void>
+
+  // 발신번호
+  addSenderNumber:    (s: Omit<SenderNumber, 'id'>) => Promise<void>
+  deleteSenderNumber: (id: number) => Promise<void>
+  setDefaultSender:   (id: number) => Promise<void>
 }
 
-const initClasses: ClassRoom[] = [
-  {
-    cid: 1, name: 'A반', subject: '초등 수학', teacher: '이수진',
-    schedule: '월·수·금 오후 4시', capacity: 15,
-    tuitionFee: 280000, bookFee: 45000,
-    color: '#DBEAFE', textColor: '#1D4ED8', createdAt: '2024.01.01',
-  },
-  {
-    cid: 2, name: 'B반', subject: '중등 수학', teacher: '박준호',
-    schedule: '화·목 오후 5시', capacity: 15,
-    tuitionFee: 320000, bookFee: 38000,
-    color: '#D1FAE5', textColor: '#065F46', createdAt: '2024.01.01',
-  },
-  {
-    cid: 3, name: 'C반', subject: '고등 수학', teacher: '최민아',
-    schedule: '월·수·금 오후 6시', capacity: 12,
-    tuitionFee: 380000, bookFee: 52000,
-    color: '#EDE9FE', textColor: '#5B21B6', createdAt: '2024.01.01',
-  },
-]
+// ── 변환 헬퍼 ──────────────────────────────────────
+function toClass(d: any): ClassRoom {
+  return {
+    cid: d.id, name: d.name, subject: d.subject, teacher: d.teacher,
+    schedule: d.schedule ?? '', capacity: d.capacity,
+    tuitionFee: d.tuitionFee, bookFee: d.bookFee,
+    color: d.color ?? '#DBEAFE', textColor: d.textColor ?? '#1D4ED8',
+    createdAt: d.createdAt?.slice(0, 10) ?? '',
+  }
+}
 
-const initParents: Parent[] = [
-  {
-    pid: 1, name: '김지원', phone: '010-1234-5678',
-    col: '#DBEAFE', tc: '#1D4ED8', kakao: true, reg: '2024.01.15',
-    students: [
-      { sid: 0, name: '김민서', cls: 'A반', grade: '초등 6', birth: '2012-03-15', status: '재원',
-        fees: { tuition: { label: '수업료', amount: 280000, paid: true }, book: { label: '교재비', amount: 45000, paid: true } } },
-      { sid: 1, name: '김민준', cls: 'B반', grade: '중등 2', birth: '2009-07-22', status: '재원',
-        fees: { tuition: { label: '수업료', amount: 320000, paid: false }, book: { label: '교재비', amount: 38000, paid: false } } },
-    ],
-  },
-  {
-    pid: 2, name: '박영수', phone: '010-9876-5432',
-    col: '#D1FAE5', tc: '#065F46', kakao: true, reg: '2024.02.03',
-    students: [
-      { sid: 2, name: '박서연', cls: 'B반', grade: '중등 1', birth: '2010-11-05', status: '재원',
-        fees: { tuition: { label: '수업료', amount: 320000, paid: true }, book: { label: '교재비', amount: 38000, paid: false } } },
-    ],
-  },
-  {
-    pid: 3, name: '이수현', phone: '010-5555-1234',
-    col: '#FEE2E2', tc: '#991B1B', kakao: false, reg: '2024.01.28',
-    students: [
-      { sid: 3, name: '이도현', cls: 'C반', grade: '고등 1', birth: '2007-04-18', status: '재원',
-        fees: { tuition: { label: '수업료', amount: 380000, paid: true }, book: { label: '교재비', amount: 52000, paid: true } } },
-    ],
-  },
-  {
-    pid: 4, name: '최영희', phone: '010-3333-7890',
-    col: '#EDE9FE', tc: '#5B21B6', kakao: true, reg: '2024.03.01',
-    students: [
-      { sid: 4, name: '최준혁', cls: 'A반', grade: '초등 5', birth: '2013-09-01', status: '재원',
-        fees: { tuition: { label: '수업료', amount: 280000, paid: false }, book: { label: '교재비', amount: 45000, paid: true } } },
-    ],
-  },
-  {
-    pid: 5, name: '정가람', phone: '010-7777-2222',
-    col: '#FCE7F3', tc: '#9D174D', kakao: false, reg: '2024.03.10',
-    students: [
-      { sid: 5, name: '정예린', cls: 'C반', grade: '고등 2', birth: '2005-05-12', status: '재원',
-        fees: { tuition: { label: '수업료', amount: 380000, paid: true }, book: { label: '교재비', amount: 52000, paid: false } } },
-    ],
-  },
-]
+function toParent(d: any): Parent {
+  return {
+    pid: d.id, name: d.name, phone: d.phone,
+    col: d.badgeColor ?? '#DBEAFE', tc: d.badgeTextColor ?? '#1D4ED8',
+    kakao: d.kakaoLinked ?? false,
+    reg: d.createdAt?.slice(0, 10) ?? '',
+    students: (d.students ?? []).map((s: any) => ({
+      sid:    s.id,
+      name:   s.name,
+      cls:    s.classroomName ?? '',
+      grade:  s.grade,
+      birth:  s.birthDate ?? '',
+      status: (s.status ?? '재원') as '재원' | '휴원' | '퇴원',
+      fees: {
+        tuition: s.fees?.find((f: any) => f.label === '수업료')
+          ?? { label: '수업료', amount: 0, paid: false },
+        book: s.fees?.find((f: any) => f.label === '교재비')
+          ?? { label: '교재비', amount: 0, paid: false },
+      },
+    })),
+  }
+}
 
-export const useDataStore = create<DataState>((set) => ({
-  parents: initParents,
-  classes: initClasses,
+function toAttendSheet(d: any): AttendSheet {
+  return {
+    id:  `${d.classroomId}_${d.date}`,
+    cid: d.classroomId,
+    date: d.date,
+    records: (d.records ?? []).map((r: any) => ({
+      sid: r.studentId, status: r.status as AttendStatus, note: r.note ?? '',
+    })),
+    createdAt: d.createdAt?.slice(0, 10) ?? '',
+  }
+}
 
-  toggleFee: (sid, key, paid) =>
-    set((state) => ({
-      parents: state.parents.map((p) => ({
+function toHwSheet(d: any): HomeworkSheet {
+  return {
+    id:  d.id ? String(d.id) : `hw_${d.classroomId}_${d.date}`,
+    cid: d.classroomId,
+    date: d.date, title: d.title,
+    records: (d.records ?? []).map((r: any) => ({
+      sid: Number(r.studentId),
+      done: !!r.done,
+      comment: r.comment ?? '',
+    })),
+    createdAt: d.createdAt?.slice(0, 10) ?? '',
+  }
+}
+
+function toNotice(d: any): NoticeItem {
+  return {
+    id: d.id, title: d.title, body: d.body,
+    targets: d.targets ?? ['전체'],
+    imageUrl: d.imageUrl, date: d.date,
+    createdAt: d.createdAt?.slice(0, 10) ?? '',
+  }
+}
+
+function toEvent(d: any): CalendarEvent {
+  return {
+    id: d.id, title: d.title,
+    date: d.date, endDate: d.endDate,
+    category: (d.category ?? '기타') as CalendarEvent['category'],
+    targets: d.targets ?? ['전체'],
+    description: d.description,
+    color: d.color ?? '#3B82F6',
+    allDay: d.allDay ?? true,
+    createdAt: d.createdAt?.slice(0, 10) ?? '',
+  }
+}
+
+function toSenderNumber(d: any): SenderNumber {
+  return {
+    id: d.id,
+    label: d.label,
+    number: d.number,
+    isDefault: !!d.isDefault,
+  }
+}
+
+function toMessageSendLog(d: any): MessageSendLog {
+  return {
+    id: d.id,
+    kind: d.kind as MessageSendLog['kind'],
+    targetLabel: d.targetLabel ?? '',
+    title: d.title ?? '',
+    bodyPreview: d.bodyPreview ?? '',
+    recipientCount: typeof d.recipientCount === 'number' ? d.recipientCount : 0,
+    createdAt: d.createdAt ?? '',
+  }
+}
+
+// ── Store ──────────────────────────────────────────
+export const useDataStore = create<DataState>((set, get) => ({
+  parents: [], classes: [], attendSheets: [],
+  homeworkSheets: [], notices: [], noticeTotal: 0, events: [],
+  senderNumbers: [],
+  messageSends: [],
+  isLoading: false,
+
+  // ── 로드 ────────────────────────────────────────
+  fetchClasses: async () => {
+    try {
+      const res = await client.get('/admin/classrooms')
+      set({ classes: res.data.data.map(toClass) })
+    } catch {}
+  },
+
+  fetchParents: async () => {
+    try {
+      const res = await client.get('/admin/parents')
+      set({ parents: res.data.data.map(toParent) })
+    } catch {}
+  },
+
+  fetchAttend: async (cid) => {
+    try {
+      const res = await client.get(`/admin/classrooms/${cid}/attend`)
+      const sheets: AttendSheet[] = res.data.data.map(toAttendSheet)
+      set(s => ({
+        attendSheets: [
+          ...s.attendSheets.filter(a => a.cid !== cid),
+          ...sheets,
+        ],
+      }))
+    } catch {}
+  },
+
+  fetchHomework: async (cid) => {
+    try {
+      const res = await client.get(`/admin/classrooms/${cid}/homework`)
+      const sheets: HomeworkSheet[] = res.data.data.map(toHwSheet)
+      set(s => ({
+        homeworkSheets: [
+          ...s.homeworkSheets.filter(h => h.cid !== cid),
+          ...sheets,
+        ],
+      }))
+    } catch {}
+  },
+
+  fetchNotices: async (page = 0, size = 10, target = null, q = '') => {
+    try {
+      const params: Record<string, any> = { page, size }
+      if (target) params.target = target
+      if (q && q.trim()) params.q = q.trim()
+
+      const res = await client.get('/admin/notices', { params })
+      const api = res.data
+      const payload = api?.data
+      const content = Array.isArray(payload?.content) ? payload.content : []
+
+      if (api?.success !== true) {
+        console.warn('[front] fetchNotices api reported failure:', api?.message, api)
+      }
+
+      const totalElements = typeof payload?.totalElements === 'number' ? payload.totalElements : 0
+      const mapped = content.map(toNotice)
+      console.log('[front] fetchNotices page=', page, 'size=', size, 'mappedLen=', mapped.length, 'totalElements=', totalElements)
+      set({ notices: mapped, noticeTotal: totalElements })
+    } catch (err: any) {
+      // 조회 실패를 숨기면 "공지가 없음"처럼 보일 수 있어 원인 파악이 어렵다.
+      console.error('공지 조회 실패:', err?.response?.data ?? err?.message ?? err)
+    }
+  },
+
+  fetchEvents: async () => {
+    try {
+      const res = await client.get('/admin/events')
+      set({ events: res.data.data.map(toEvent) })
+    } catch {}
+  },
+
+  fetchSenderNumbers: async () => {
+    try {
+      const res = await client.get('/admin/sender-numbers')
+      const list = res.data?.data ?? []
+      const mapped = Array.isArray(list) ? list.map(toSenderNumber) : []
+      set({ senderNumbers: mapped })
+    } catch (e) {
+      console.error('발신번호 목록 조회 실패:', e)
+    }
+  },
+
+  fetchMessageSends: async () => {
+    try {
+      const res = await client.get('/admin/message-sends')
+      const list = res.data?.data ?? []
+      const mapped = Array.isArray(list) ? list.map(toMessageSendLog) : []
+      set({ messageSends: mapped })
+    } catch (e) {
+      console.error('발송 내역 조회 실패:', e)
+    }
+  },
+
+  saveMessageSendLog: async (p) => {
+    const res = await client.post('/admin/message-sends', {
+      kind: p.kind,
+      targetLabel: p.targetLabel,
+      title: p.title,
+      bodyPreview: p.bodyPreview,
+      recipientCount: p.recipientCount,
+    })
+    const created = toMessageSendLog(res.data.data)
+    set(s => ({ messageSends: [created, ...s.messageSends.filter(x => x.id !== created.id)] }))
+  },
+
+  // ── 반 ──────────────────────────────────────────
+  addClass: async (cls) => {
+    const res = await client.post('/admin/classrooms', {
+      name: cls.name, subject: cls.subject, teacher: cls.teacher,
+      schedule: cls.schedule, capacity: cls.capacity,
+      tuitionFee: cls.tuitionFee, bookFee: cls.bookFee,
+      color: cls.color, textColor: cls.textColor,
+    })
+    set(s => ({ classes: [...s.classes, toClass(res.data.data)] }))
+  },
+
+  updateClass: async (cid, cls) => {
+    const cur = get().classes.find(c => c.cid === cid)
+    if (!cur) return
+    const res = await client.put(`/admin/classrooms/${cid}`, { ...cur, ...cls })
+    set(s => ({ classes: s.classes.map(c => c.cid === cid ? toClass(res.data.data) : c) }))
+  },
+
+  deleteClass: async (cid) => {
+    await client.delete(`/admin/classrooms/${cid}`)
+    set(s => ({ classes: s.classes.filter(c => c.cid !== cid) }))
+  },
+
+  // ── 학부모/학생 ──────────────────────────────────
+  addParent: async (parent) => {
+    const res = await client.post('/admin/parents', {
+      name:           parent.name,
+      phone:          parent.phone,
+      loginPhone:     parent.loginPhone    ?? parent.phone,
+      loginPassword:  parent.loginPassword ?? '0000',
+      badgeColor:     parent.badgeColor    ?? '#DBEAFE',
+      badgeTextColor: parent.badgeTextColor ?? '#1D4ED8',
+    })
+    set(s => ({ parents: [toParent(res.data.data), ...s.parents] }))
+  },
+
+  addStudent: async (pid, student) => {
+    await client.post(`/admin/parents/${pid}/students`, {
+      name:        student.name,
+      grade:       student.grade,
+      classroomId: student.classroomId,
+      status:      student.status ?? '재원',
+    })
+    // 학부모 목록 새로고침
+    const pRes = await client.get('/admin/parents')
+    set({ parents: pRes.data.data.map(toParent) })
+  },
+
+  deleteParent: async (pid) => {
+    // API에 삭제 엔드포인트 추가 시 사용
+    set(s => ({ parents: s.parents.filter(p => p.pid !== pid) }))
+  },
+
+  // ── 수납 ────────────────────────────────────────
+  toggleFee: async (sid, key, paid, yearMonth) => {
+    const ym = yearMonth ?? parseInt(
+      new Date().toISOString().slice(0, 7).replace('-', '')
+    )
+    const label = key === 'tuition' ? '수업료' : '교재비'
+    await client.patch(`/admin/parents/students/${sid}/fees`, { label, paid, yearMonth: ym })
+    // 로컬 즉시 반영
+    set(s => ({
+      parents: s.parents.map(p => ({
         ...p,
-        students: p.students.map((s) =>
-          s.sid === sid ? { ...s, fees: { ...s.fees, [key]: { ...s.fees[key], paid } } } : s
+        students: p.students.map(st =>
+          st.sid === sid
+            ? { ...st, fees: { ...st.fees, [key]: { ...st.fees[key], paid } } }
+            : st
         ),
       })),
-    })),
+    }))
+  },
 
-  addStudent: (pid, student) =>
-    set((state) => {
-      const maxSid = Math.max(0, ...state.parents.flatMap((p) => p.students.map((s) => s.sid)))
-      return {
-        parents: state.parents.map((p) =>
-          p.pid === pid ? { ...p, students: [...p.students, { ...student, sid: maxSid + 1 }] } : p
-        ),
-      }
-    }),
+  // ── 출석 ────────────────────────────────────────
+  saveAttendSheet: async (cid, date, records) => {
+    const res = await client.post(`/admin/classrooms/${cid}/attend`, {
+      date,
+      records: records.map(r => ({
+        studentId: r.sid, status: r.status, note: r.note ?? '',
+      })),
+    })
+    const sheet = toAttendSheet(res.data.data)
+    set(s => {
+      const filtered = s.attendSheets.filter(a => !(a.cid === cid && a.date === date))
+      return { attendSheets: [...filtered, sheet] }
+    })
+  },
 
-  deleteStudent: (pid, sid) =>
-    set((state) => ({
-      parents: state.parents.map((p) =>
-        p.pid === pid ? { ...p, students: p.students.filter((s) => s.sid !== sid) } : p
+  // ── 숙제 ────────────────────────────────────────
+  saveHomeworkSheet: async (cid, date, title, records) => {
+    const res = await client.post(`/admin/classrooms/${cid}/homework`, {
+      date, title,
+      records: records.map(r => ({
+        studentId: r.sid, done: r.done, comment: r.comment ?? '',
+      })),
+    })
+    const sheet = toHwSheet(res.data.data)
+    set(s => {
+      const filtered = s.homeworkSheets.filter(h => !(h.cid === cid && h.date === date))
+      return { homeworkSheets: [...filtered, sheet] }
+    })
+  },
+
+  updateHomeworkRecord: async (sheetId, sid, done, comment) => {
+    const idKey = String(sheetId)
+    const sidNum = Number(sid)
+    const sheet = get().homeworkSheets.find(h => String(h.id) === idKey)
+    if (!sheet) {
+      console.error('[updateHomeworkRecord] sheet not found:', sheetId)
+      throw new Error('숙제 시트를 찾을 수 없습니다.')
+    }
+    await client.patch(
+      `/admin/classrooms/${sheet.cid}/homework/${idKey}/students/${sidNum}`,
+      { done, comment }
+    )
+    set(s => ({
+      homeworkSheets: s.homeworkSheets.map(h =>
+        String(h.id) === idKey
+          ? { ...h, records: h.records.map(r => Number(r.sid) === sidNum ? { ...r, done, comment } : r) }
+          : h
       ),
-    })),
+    }))
+  },
 
-  addClass: (cls) =>
-    set((state) => {
-      const maxCid = Math.max(0, ...state.classes.map((c) => c.cid))
-      const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '.').replace('.', '')
-      return {
-        classes: [...state.classes, { ...cls, cid: maxCid + 1, createdAt: today }],
-      }
-    }),
+  deleteHomeworkSheet: async (sheetId) => {
+    const idKey = String(sheetId)
+    const sheet = get().homeworkSheets.find(h => String(h.id) === idKey)
+    if (!sheet) return
+    await client.delete(`/admin/classrooms/${sheet.cid}/homework/${idKey}`)
+    set(s => ({
+      homeworkSheets: s.homeworkSheets.filter(h => String(h.id) !== idKey),
+    }))
+  },
 
-  updateClass: (cid, cls) =>
-    set((state) => ({
-      classes: state.classes.map((c) => c.cid === cid ? { ...c, ...cls } : c),
-    })),
+  // ── 공지 ────────────────────────────────────────
+  addNotice: async (n) => {
+    try {
+      // date 포맷을 YYYY-MM-DD 로 변환 (API 요구사항)
+      const apiDate = n.date
+        ? n.date.replace(/\./g, '-').replace(/\.$/, '').replace(/(\d{4})-(\d{1,2})-(\d{1,2})/, (_, y, m, d) =>
+            `${y}-${m.padStart(2,'0')}-${d.padStart(2,'0')}`)
+        : new Date().toISOString().slice(0, 10)
 
-  events: [
-    { id: 1, title: '3월 개강', date: '2024-03-04', category: '수업', targets: ['전체'], color: '#3B82F6', allDay: true, createdAt: '2024-02-20' },
-    { id: 2, title: 'A반 모의고사', date: '2024-03-15', category: '시험', targets: ['A반'], color: '#8B5CF6', allDay: true, createdAt: '2024-03-01' },
-    { id: 3, title: '봄방학', date: '2024-03-25', endDate: '2024-03-29', category: '휴일', targets: ['전체'], color: '#F59E0B', allDay: true, createdAt: '2024-03-01' },
-    { id: 4, title: 'B·C반 교재 배포', date: '2024-03-18', category: '행사', targets: ['B반', 'C반'], color: '#10B981', allDay: true, createdAt: '2024-03-10' },
-    { id: 5, title: '학부모 상담 주간', date: '2024-03-20', endDate: '2024-03-22', category: '상담', targets: ['전체'], color: '#EF4444', allDay: true, createdAt: '2024-03-10' },
-  ],
+      const res = await client.post('/admin/notices', {
+        title:    n.title,
+        body:     n.body,
+        targets:  n.targets,
+        date:     apiDate,
+        imageUrl: n.imageUrl,
+      })
+      // 저장 성공 즉시 로컬 반영 (재조회 실패 시에도 UI에 보이도록)
+      const created = toNotice(res.data.data)
+      set(s => ({ notices: [created, ...s.notices.filter((x) => x.id !== created.id)] }))
 
-  addEvent: (e) =>
-    set((state) => {
-      const maxId = Math.max(0, ...state.events.map((x) => x.id))
-      const today = new Date().toISOString().slice(0, 10)
-      return { events: [...state.events, { ...e, id: maxId + 1, createdAt: today }] }
-    }),
+      // 서버 기준으로 한 번 더 동기화 (best-effort, UI 대기하지 않음)
+      void get().fetchNotices().catch((e) => {
+        console.warn('[front] addNotice: fetchNotices sync failed (non-blocking):', e?.message ?? e)
+      })
+    } catch (err: any) {
+      console.error('공지 저장 실패:', err.response?.data ?? err.message)
+      throw err
+    }
+  },
 
-  updateEvent: (id, e) =>
-    set((state) => ({ events: state.events.map((x) => x.id === id ? { ...x, ...e } : x) })),
+  deleteNotice: async (id) => {
+    await client.delete(`/admin/notices/${id}`)
+    await get().fetchNotices()
+  },
 
-  deleteEvent: (id) =>
-    set((state) => ({ events: state.events.filter((x) => x.id !== id) })),
+  // ── 일정 ────────────────────────────────────────
+  addEvent: async (e) => {
+    const res = await client.post('/admin/events', {
+      title: e.title, date: e.date, endDate: e.endDate,
+      category: e.category, targets: e.targets,
+      description: e.description, color: e.color,
+      allDay: e.allDay ?? true,
+    })
+    set(s => ({ events: [...s.events, toEvent(res.data.data)] }))
+  },
 
-  notices: [
-    { id: 1, title: '3월 수업료 안내', body: '이번 달 수업료 납부 기한은 3월 10일까지입니다.', targets: ['전체'], date: '2024.03.01', createdAt: '2024-03-01' },
-    { id: 2, title: 'A반 모의고사 일정', body: '3월 15일 토요일 오전 10시 모의고사가 진행됩니다.', targets: ['A반'], date: '2024.03.05', createdAt: '2024-03-05' },
-    { id: 3, title: 'B반·C반 교재 변경 안내', body: '4월부터 새 교재로 변경됩니다. 구매 방법은 추후 안내 예정입니다.', targets: ['B반', 'C반'], date: '2024.03.08', createdAt: '2024-03-08' },
-  ],
+  updateEvent: async (id, e) => {
+    const cur = get().events.find(ev => ev.id === id)
+    if (!cur) return
+    const res = await client.put(`/admin/events/${id}`, { ...cur, ...e })
+    set(s => ({ events: s.events.map(ev => ev.id === id ? toEvent(res.data.data) : ev) }))
+  },
 
-  addNotice: (n) =>
-    set((state) => {
-      const maxId = Math.max(0, ...state.notices.map((x) => x.id))
-      const today = new Date().toISOString().slice(0, 10)
-      return { notices: [{ ...n, id: maxId + 1, createdAt: today }, ...state.notices] }
-    }),
+  deleteEvent: async (id) => {
+    await client.delete(`/admin/events/${id}`)
+    set(s => ({ events: s.events.filter(ev => ev.id !== id) }))
+  },
 
-  deleteNotice: (id) =>
-    set((state) => ({ notices: state.notices.filter((n) => n.id !== id) })),
+  // ── 발신번호 (로컬 상태) ────────────────────────────
+  addSenderNumber: async (sender) => {
+    const res = await client.post('/admin/sender-numbers', {
+      label: sender.label,
+      number: sender.number,
+    })
+    const created = toSenderNumber(res.data.data)
+    set(s => ({ senderNumbers: [created, ...s.senderNumbers] }))
+  },
 
-  senderNumbers: [
-    { id: 1, label: '원장', number: '010-1234-5678', isDefault: true },
-    { id: 2, label: '담당교사', number: '010-9999-8888', isDefault: false },
-  ],
+  deleteSenderNumber: async (id) => {
+    await client.delete(`/admin/sender-numbers/${id}`)
+    set(s => ({ senderNumbers: s.senderNumbers.filter(n => n.id !== id) }))
+  },
 
-  addSenderNumber: (s) =>
-    set((state) => {
-      const maxId = Math.max(0, ...state.senderNumbers.map((x) => x.id))
-      const numbers = s.isDefault
-        ? state.senderNumbers.map((x) => ({ ...x, isDefault: false }))
-        : state.senderNumbers
-      return { senderNumbers: [...numbers, { ...s, id: maxId + 1 }] }
-    }),
-
-  updateSenderNumber: (id, s) =>
-    set((state) => ({ senderNumbers: state.senderNumbers.map((x) => x.id === id ? { ...x, ...s } : x) })),
-
-  deleteSenderNumber: (id) =>
-    set((state) => ({ senderNumbers: state.senderNumbers.filter((x) => x.id !== id) })),
-
-  setDefaultSender: (id) =>
-    set((state) => ({
-      senderNumbers: state.senderNumbers.map((x) => ({ ...x, isDefault: x.id === id })),
-    })),
-
-  attendSheets: [],
-
-  saveAttendSheet: (cid, date, records) =>
-    set((state) => {
-      const id = `${cid}_${date}`
-      const now = new Date().toISOString().slice(0, 10)
-      const existing = state.attendSheets.find((s) => s.id === id)
-      if (existing) {
-        return { attendSheets: state.attendSheets.map((s) => s.id === id ? { ...s, records } : s) }
-      }
-      return { attendSheets: [...state.attendSheets, { id, cid, date, records, createdAt: now }] }
-    }),
-
-  deleteAttendSheet: (sheetId) =>
-    set((state) => ({ attendSheets: state.attendSheets.filter((s) => s.id !== sheetId) })),
-
-  // ── 숙제 관리 ──────────────────────────────────────
-  homeworkSheets: [],
-
-  saveHomeworkSheet: (cid, date, title, records) =>
-    set((state) => {
-      const id = `hw_${cid}_${date}`
-      const now = new Date().toISOString().slice(0, 10)
-      const existing = state.homeworkSheets.find((s) => s.id === id)
-      if (existing) {
-        return { homeworkSheets: state.homeworkSheets.map((s) => s.id === id ? { ...s, title, records } : s) }
-      }
-      return { homeworkSheets: [...state.homeworkSheets, { id, cid, date, title, records, createdAt: now }] }
-    }),
-
-  deleteHomeworkSheet: (id) =>
-    set((state) => ({ homeworkSheets: state.homeworkSheets.filter((s) => s.id !== id) })),
-
-  updateHomeworkRecord: (sheetId, sid, done, comment) =>
-    set((state) => ({
-      homeworkSheets: state.homeworkSheets.map((s) =>
-        s.id !== sheetId ? s : {
-          ...s,
-          records: s.records.map((r) => r.sid === sid ? { ...r, done, comment } : r),
-        }
-      ),
-    })),
-
-  deleteClass: (cid) =>
-    set((state) => ({
-      classes: state.classes.filter((c) => c.cid !== cid),
-    })),
+  setDefaultSender: async (id) => {
+    const res = await client.patch(`/admin/sender-numbers/${id}/default`)
+    const updated = toSenderNumber(res.data.data)
+    set(s => ({
+      senderNumbers: s.senderNumbers.map(n => ({
+        ...n,
+        isDefault: n.id === updated.id,
+      })),
+    }))
+  },
 }))
 
-// 유틸 함수
-export const totalFee = (s: { fees: { tuition: { amount: number }; book: { amount: number } } }) =>
-  s.fees.tuition.amount + s.fees.book.amount
+// ── 편의 헬퍼 (기존 코드 호환) ──────────────────────
 
-export const paidFee = (s: { fees: { tuition: { amount: number; paid: boolean }; book: { amount: number; paid: boolean } } }) =>
-  (s.fees.tuition.paid ? s.fees.tuition.amount : 0) + (s.fees.book.paid ? s.fees.book.amount : 0)
+type FeeStudent = {
+  fees: {
+    tuition: { amount: number; paid: boolean }
+    book:    { amount: number; paid: boolean }
+  }
+}
+type StatusStudent = { status: string }
 
-export const isFullPaid = (s: { fees: { tuition: { paid: boolean }; book: { paid: boolean } } }) =>
-  s.fees.tuition.paid && s.fees.book.paid
+export function totalFee(s: FeeStudent) {
+  return s.fees.tuition.amount + s.fees.book.amount
+}
 
-export const isPartPaid = (s: { fees: { tuition: { paid: boolean }; book: { paid: boolean } } }) =>
-  (s.fees.tuition.paid || s.fees.book.paid) && !(s.fees.tuition.paid && s.fees.book.paid)
+export function paidFee(s: FeeStudent) {
+  return (s.fees.tuition.paid ? s.fees.tuition.amount : 0)
+       + (s.fees.book.paid    ? s.fees.book.amount    : 0)
+}
 
-export const payPct = (s: Parameters<typeof totalFee>[0] & Parameters<typeof paidFee>[0]) => {
+export function isFullPaid(s: FeeStudent) {
+  return s.fees.tuition.paid && s.fees.book.paid
+}
+
+export function isPartPaid(s: FeeStudent) {
+  return !isFullPaid(s) && paidFee(s) > 0
+}
+
+export function payPct(s: FeeStudent) {
   const t = totalFee(s)
   return t > 0 ? Math.round((paidFee(s) / t) * 100) : 0
 }
 
-export const clsBdg = (c: string) =>
-  c === 'A반' ? 'badge-blue' : c === 'B반' ? 'badge-green' : c === 'C반' ? 'badge-purple' : 'badge-gray'
+export function barCol(s: FeeStudent) {
+  const pct = payPct(s)
+  if (pct >= 100) return 'var(--ok)'
+  if (pct > 0)    return 'var(--warn)'
+  return 'var(--err)'
+}
 
-export const clsCol = (c: string) =>
-  c === 'A반' ? { bg: '#DBEAFE', tc: '#1D4ED8' }
-  : c === 'B반' ? { bg: '#D1FAE5', tc: '#065F46' }
-  : { bg: '#F3E8FF', tc: '#5B21B6' }
+export function statusBdgCls(s: StatusStudent) {
+  switch (s.status) {
+    case '재원': return 'badge-green'
+    case '휴원': return 'badge-amber'
+    case '퇴원': return 'badge-red'
+    default:     return 'badge-gray'
+  }
+}
 
-export const barCol = (s: Parameters<typeof isFullPaid>[0]) =>
-  isFullPaid(s) ? 'var(--ok)' : isPartPaid(s) ? 'var(--warn)' : 'var(--err)'
+export function statusBdgTxt(s: StatusStudent) {
+  return s.status ?? '재원'
+}
 
-export const statusBdgCls = (s: Parameters<typeof isFullPaid>[0]) =>
-  isFullPaid(s) ? 'badge-green' : isPartPaid(s) ? 'badge-amber' : 'badge-red'
+// 반 이름 기반 배지 색상
+const CLS_COLORS: Record<string, { bg: string; color: string }> = {
+  'A반': { bg: '#DBEAFE', color: '#1D4ED8' },
+  'B반': { bg: '#D1FAE5', color: '#065F46' },
+  'C반': { bg: '#EDE9FE', color: '#5B21B6' },
+  'D반': { bg: '#FEF3C7', color: '#92400E' },
+  'E반': { bg: '#FCE7F3', color: '#9D174D' },
+  'F반': { bg: '#E0F2FE', color: '#0369A1' },
+}
+const DEFAULT_CLS = { bg: '#F0EEFF', color: '#6C63FF' }
 
-export const statusBdgTxt = (s: Parameters<typeof isFullPaid>[0]) =>
-  isFullPaid(s) ? '완납' : isPartPaid(s) ? '일부납' : '미납'
+export function clsCol(clsName: string) {
+  return CLS_COLORS[clsName] ?? DEFAULT_CLS
+}
+
+export function clsBdg(_clsName: string) {
+  return 'badge-purple'
+}
+

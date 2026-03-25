@@ -1,5 +1,5 @@
 // src/pages/notice/NoticePage.tsx
-import React, { useState, useRef } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import { TopBar, TabBar, Badge, Fab, useToast, Toast } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
 
@@ -8,13 +8,33 @@ type View = 'list' | 'write' | 'detail'
 export default function NoticePage() {
   const classes = useDataStore((s) => s.classes)
   const notices = useDataStore((s) => s.notices)
+  const noticeTotal = useDataStore((s) => s.noticeTotal)
   const addNotice = useDataStore((s) => s.addNotice)
   const deleteNotice = useDataStore((s) => s.deleteNotice)
+  const fetchNotices = useDataStore((s) => s.fetchNotices)
   const { ref: toastRef, show: showToast } = useToast()
 
   const [view, setView] = useState<View>('list')
   const [tabIdx, setTabIdx] = useState(0)
   const [detailId, setDetailId] = useState<number | null>(null)
+  const [q, setQ] = useState('')
+  const PAGE_SIZE = 10
+  const [pageIdx, setPageIdx] = useState(0)
+
+  // 공지 페이지 진입 시 DB 기준으로 항상 최신 목록 재조회
+  useEffect(() => {
+    ;(async () => {
+      try {
+        await fetchNotices(pageIdx, PAGE_SIZE, tabIdx === 0 ? null : tabs[tabIdx], q)
+      } catch {
+        showToast('공지 목록 조회에 실패했습니다.')
+      }
+    })()
+  }, [fetchNotices, pageIdx, tabIdx, q])
+
+  useEffect(() => {
+    console.log('[front] NoticePage notices length changed =>', notices.length)
+  }, [notices.length])
 
   // 작성 폼 상태
   const [title, setTitle] = useState('')
@@ -22,15 +42,24 @@ export default function NoticePage() {
   const [targets, setTargets] = useState<string[]>(['전체'])
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [imageFile, setImageFile] = useState<File | null>(null)
+  const [isSaving, setIsSaving] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const tabs = ['전체', ...classes.map((c) => c.name)]
-  const filter = tabIdx === 0 ? null : tabs[tabIdx]
+  const filtered = notices
+  const totalPages = Math.max(1, Math.ceil(noticeTotal / PAGE_SIZE))
+  const safePageIdx = Math.min(pageIdx, totalPages - 1)
+  const pageItems = filtered
 
-  // 공지 필터 — targets 배열에 filter 값이 포함되어 있거나 '전체' 포함
-  const filtered = filter
-    ? notices.filter((n) => n.targets.includes(filter) || n.targets.includes('전체'))
-    : notices
+  useEffect(() => {
+    // 페이지 수가 줄어드는 경우(삭제 등) 현재 pageIdx를 범위 내로 보정
+    if (pageIdx !== safePageIdx) setPageIdx(safePageIdx)
+  }, [safePageIdx])
+
+  useEffect(() => {
+    // 탭/검색이 바뀌면(클라이언트 필터) 1페이지로 리셋하고, 다음 fetch는 pageIdx 변경으로 트리거
+    setPageIdx(0)
+  }, [tabIdx, q])
 
   const clsBadge = (target: string) => {
     if (target === '전체') return 'badge-gray'
@@ -74,19 +103,28 @@ export default function NoticePage() {
     reader.readAsDataURL(file)
   }
 
-  const handleWrite = () => {
+  const handleWrite = async () => {
+    if (isSaving) return
     if (!title.trim()) { alert('제목을 입력하세요.'); return }
     if (!body.trim()) { alert('내용을 입력하세요.'); return }
-    addNotice({
-      title, body, targets,
-      imageUrl: imagePreview ?? undefined,
-      date: new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' }).replace(/\. /g, '.').replace('.', ''),
-    })
-    // 초기화
-    setTitle(''); setBody(''); setTargets(['전체'])
-    setImagePreview(null); setImageFile(null)
-    setView('list')
-    showToast('공지사항이 등록되었습니다.')
+    try {
+      setIsSaving(true)
+      await addNotice({
+        title, body, targets,
+        imageUrl: imagePreview ?? undefined,
+        date: new Date().toISOString().slice(0, 10),
+      })
+      setTitle(''); setBody(''); setTargets(['전체'])
+      setImagePreview(null); setImageFile(null)
+      setView('list')
+      showToast('공지사항이 등록되었습니다.')
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { message?: string } } }
+      const msg = ax.response?.data?.message
+      alert(msg ?? '공지 저장에 실패했습니다. API 서버를 확인해주세요.')
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const openDetail = (id: number) => { setDetailId(id); setView('detail') }
@@ -102,13 +140,15 @@ export default function NoticePage() {
           right={
             <button
               onClick={handleWrite}
+              disabled={isSaving}
               style={{
                 fontSize: 13, fontWeight: 600, padding: '6px 14px',
                 background: 'var(--acc)', color: '#fff', border: 'none',
-                borderRadius: 8, cursor: 'pointer',
+                borderRadius: 8, cursor: isSaving ? 'not-allowed' : 'pointer',
+                opacity: isSaving ? 0.6 : 1,
               }}
             >
-              등록
+              {isSaving ? '등록 중...' : '등록'}
             </button>
           }
         />
@@ -227,7 +267,9 @@ export default function NoticePage() {
               </button>
             )}
 
-            <button className="btn-primary" onClick={handleWrite}>공지 등록하기</button>
+            <button className="btn-primary" onClick={handleWrite} disabled={isSaving} style={{ opacity: isSaving ? 0.6 : 1 }}>
+              {isSaving ? '등록 중...' : '공지 등록하기'}
+            </button>
             <button className="btn-secondary" onClick={() => setView('list')}>취소</button>
           </div>
         </div>
@@ -249,6 +291,7 @@ export default function NoticePage() {
               onClick={() => {
                 if (window.confirm('이 공지사항을 삭제하시겠습니까?')) {
                   deleteNotice(detailNotice.id)
+                  fetchNotices()
                   setView('list')
                   showToast('삭제되었습니다.')
                 }
@@ -299,17 +342,24 @@ export default function NoticePage() {
   // ── 공지 목록 화면 ──────────────────────────────────────
   return (
     <>
-      <TopBar title="공지사항" sub={`총 ${notices.length}건`} />
+      <TopBar title="공지사항" sub={`총 ${noticeTotal}건`} />
       <TabBar tabs={tabs} active={tabIdx} onChange={setTabIdx} />
       
         <div className="page-content-body">
         <div className="sec">
+          <input
+            className="input-field"
+            placeholder="제목/내용/대상 검색"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            style={{ marginBottom: 10 }}
+          />
           {filtered.length === 0 && (
             <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--slate3)', fontSize: 13 }}>
-              공지사항이 없습니다
+              {noticeTotal === 0 ? '공지사항이 없습니다' : '현재 페이지에 표시할 공지가 없습니다'}
             </div>
           )}
-          {filtered.map((n) => (
+          {pageItems.map((n) => (
             <div
               key={n.id}
               className="card"
@@ -348,6 +398,79 @@ export default function NoticePage() {
               </div>
             </div>
           ))}
+
+          {noticeTotal > 0 && totalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 14, alignItems: 'center' }}>
+              <button
+                className="btn-secondary"
+                onClick={() => setPageIdx((p) => Math.max(0, p - 1))}
+                disabled={safePageIdx === 0}
+                style={{ opacity: safePageIdx === 0 ? 0.6 : 1 }}
+              >
+                이전
+              </button>
+
+              {(() => {
+                const windowSize = 5
+                let start = Math.max(0, safePageIdx - Math.floor(windowSize / 2))
+                let end = Math.min(totalPages - 1, start + windowSize - 1)
+                start = Math.max(0, end - windowSize + 1)
+
+                const pages: number[] = []
+                for (let i = start; i <= end; i++) pages.push(i)
+
+                return (
+                  <>
+                    {start > 0 && (
+                      <>
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setPageIdx(0)}
+                          style={{ opacity: safePageIdx === 0 ? 0.65 : 1, minWidth: 38 }}
+                        >
+                          1
+                        </button>
+                        {start > 1 && <span style={{ color: 'var(--slate3)', padding: '0 6px' }}>…</span>}
+                      </>
+                    )}
+
+                    {pages.map((p) => (
+                      <button
+                        key={p}
+                        className={p === safePageIdx ? 'btn-primary' : 'btn-secondary'}
+                        onClick={() => setPageIdx(p)}
+                        style={{ minWidth: 38, opacity: p === safePageIdx ? 1 : 0.9 }}
+                      >
+                        {p + 1}
+                      </button>
+                    ))}
+
+                    {end < totalPages - 1 && (
+                      <>
+                        {end < totalPages - 2 && <span style={{ color: 'var(--slate3)', padding: '0 6px' }}>…</span>}
+                        <button
+                          className="btn-secondary"
+                          onClick={() => setPageIdx(totalPages - 1)}
+                          style={{ opacity: safePageIdx === totalPages - 1 ? 0.65 : 1, minWidth: 38 }}
+                        >
+                          {totalPages}
+                        </button>
+                      </>
+                    )}
+                  </>
+                )
+              })()}
+
+              <button
+                className="btn-secondary"
+                onClick={() => setPageIdx((p) => Math.min(totalPages - 1, p + 1))}
+                disabled={safePageIdx >= totalPages - 1}
+                style={{ opacity: safePageIdx >= totalPages - 1 ? 0.6 : 1 }}
+              >
+                다음
+              </button>
+            </div>
+          )}
         </div>
       </div>
       <Fab onClick={() => { setTitle(''); setBody(''); setTargets(['전체']); setImagePreview(null); setView('write') }} />

@@ -1,7 +1,9 @@
 // src/components/layout/Layout.tsx
 import type { ReactNode } from 'react'
+import { useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
+import { useDataStore } from '../../store/dataStore'
 
 const GROUPS = [
   { label: '관리', items: [
@@ -38,7 +40,16 @@ export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { user, logout } = useAuthStore()
+  const { fetchClasses, fetchParents, fetchNotices, fetchEvents } = useDataStore()
   const base = '/' + pathname.split('/')[1]
+
+  // 로그인 후 첫 마운트 시 전체 데이터 로드
+  useEffect(() => {
+    fetchClasses()
+    fetchParents()
+    fetchNotices()
+    fetchEvents()
+  }, [])
 
   const handleLogout = () => {
     if (window.confirm('로그아웃 하시겠습니까?')) {

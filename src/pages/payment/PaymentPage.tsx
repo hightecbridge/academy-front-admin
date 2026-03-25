@@ -11,13 +11,18 @@ export default function PaymentPage() {
   const toggleFee = useDataStore((s) => s.toggleFee)
   const { ref: toastRef, show: showToast } = useToast()
   const [tabIdx, setTabIdx] = useState(0)
+  const [q, setQ] = useState('')
 
   const allStu = parents.flatMap((p) => p.students.map((s) => ({
     ...s, pid: p.pid, pname: p.name, pcol: p.col, ptc: p.tc,
   })))
-  const filtered = tabIdx === 1 ? allStu.filter((s) => !isFullPaid(s))
-    : tabIdx === 2 ? allStu.filter((s) => isFullPaid(s))
-    : allStu
+  const qNorm = q.trim().toLowerCase()
+  const filtered = allStu
+    .filter((s) => tabIdx === 1 ? !isFullPaid(s) : tabIdx === 2 ? isFullPaid(s) : true)
+    .filter((s) => {
+      if (!qNorm) return true
+      return s.name.toLowerCase().includes(qNorm) || s.pname.toLowerCase().includes(qNorm)
+    })
 
   const tAmt = allStu.reduce((a, s) => a + totalFee(s), 0)
   const pAmt = allStu.reduce((a, s) => a + paidFee(s), 0)
@@ -96,6 +101,14 @@ export default function PaymentPage() {
 
         {/* 학생 목록 */}
         <div className="sec">
+          <div style={{ marginBottom: 10 }}>
+            <input
+              className="input-field"
+              placeholder="학생명/학부모명 검색"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
           <div className="sec-title">{filtered.length}명 — 토글로 납부 상태 변경</div>
           {filtered.map((s) => (
             <div key={s.sid} className="pay-card">

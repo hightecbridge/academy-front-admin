@@ -75,14 +75,21 @@ export default function AttendSheetPage() {
     setSaved(false)
   }
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const finalRecords: AttendRecord[] = records.map((r) => ({
       ...r,
       note: notes[r.sid] || undefined,
     }))
-    saveAttendSheet(Number(cid), date, finalRecords)
-    setSaved(true)
-    showToast('출석부가 저장되었습니다.')
+    try {
+      setSaved(false)
+      await saveAttendSheet(Number(cid), date, finalRecords)
+      setSaved(true)
+      showToast('출석부가 저장되었습니다.')
+    } catch (e: any) {
+      setSaved(false)
+      const msg = e?.response?.data?.message ?? e?.message ?? '출석부 저장에 실패했습니다.'
+      alert(msg)
+    }
   }
 
   const handleAllPresent = () => {
@@ -91,9 +98,9 @@ export default function AttendSheetPage() {
     showToast('전체 출석으로 설정했습니다.')
   }
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (!window.confirm('이 날짜의 출석 기록을 삭제하시겠습니까?')) return
-    deleteAttendSheet(sheetId)
+    await deleteAttendSheet(sheetId)
     navigate(`/attend`)
   }
 

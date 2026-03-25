@@ -88,6 +88,17 @@ export interface SenderNumber {
   isDefault: boolean
 }
 
+/** 알림톡/문자 발송 내역 (서버 저장) */
+export interface MessageSendLog {
+  id: number
+  kind: 'CLASS' | 'ALL' | 'PAYMENT'
+  targetLabel: string
+  title: string
+  bodyPreview: string
+  recipientCount: number
+  createdAt: string
+}
+
 // ── 숙제 관리 ──────────────────────────────────────
 export interface HomeworkRecord {
   sid: number        // 학생 ID
