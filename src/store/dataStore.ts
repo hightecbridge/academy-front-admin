@@ -46,6 +46,7 @@ interface DataState {
   toggleFee:   (sid: number, key: 'tuition' | 'book', paid: boolean, yearMonth?: number) => Promise<void>
 
   saveAttendSheet:  (cid: number, date: string, records: AttendRecord[]) => Promise<void>
+  deleteAttendSheet: (sheetId: string) => Promise<void>
   saveHomeworkSheet:(cid: number, date: string, title: string, records: HomeworkRecord[]) => Promise<void>
   updateHomeworkRecord: (sheetId: string, sid: number, done: boolean, comment: string) => Promise<void>
   deleteHomeworkSheet: (sheetId: string) => Promise<void>
@@ -369,6 +370,15 @@ export const useDataStore = create<DataState>((set, get) => ({
     })
   },
 
+  deleteAttendSheet: async (sheetId) => {
+    const u = sheetId.indexOf('_')
+    if (u < 0) throw new Error('Invalid attend sheet id')
+    const cid = Number(sheetId.slice(0, u))
+    const date = sheetId.slice(u + 1)
+    await client.delete(`/admin/classrooms/${cid}/attend`, { params: { date } })
+    set(s => ({ attendSheets: s.attendSheets.filter(a => a.id !== sheetId) }))
+  },
+
   // ── 숙제 ────────────────────────────────────────
   saveHomeworkSheet: async (cid, date, title, records) => {
     const res = await client.post(`/admin/classrooms/${cid}/homework`, {
@@ -563,8 +573,9 @@ const CLS_COLORS: Record<string, { bg: string; color: string }> = {
 }
 const DEFAULT_CLS = { bg: '#F0EEFF', color: '#6C63FF' }
 
-export function clsCol(clsName: string) {
-  return CLS_COLORS[clsName] ?? DEFAULT_CLS
+export function clsCol(clsName: string): { bg: string; color: string; tc: string } {
+  const c = CLS_COLORS[clsName] ?? DEFAULT_CLS
+  return { ...c, tc: c.color }
 }
 
 export function clsBdg(_clsName: string) {
