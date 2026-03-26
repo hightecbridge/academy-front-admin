@@ -158,6 +158,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           <span>100%</span>
         </div>
 
+        {/* 페이지 컨텐츠 */}
+        {children}
+
         {/* 모바일: 사이드바에 있는 사용자 정보·로그아웃 (≤768px에서만 표시) */}
         <div className="mobile-user-bar">
           <button
@@ -190,9 +193,6 @@ export default function Layout({ children }: { children: ReactNode }) {
             로그아웃
           </button>
         </div>
-
-        {/* 페이지 컨텐츠 */}
-        {children}
 
         {/* 모바일 하단 탭 */}
         <div className="bottom-nav">
