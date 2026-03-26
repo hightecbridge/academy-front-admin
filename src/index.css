@@ -124,7 +124,7 @@ a { text-decoration: none; color: inherit; }
   }
 
   /* 모바일 전용 요소 숨김 */
-  .status-bar, .top-bar, .tab-bar, .bottom-nav, .breadcrumb { display: none !important; }
+  .status-bar, .top-bar, .tab-bar, .bottom-nav, .breadcrumb, .mobile-user-bar { display: none !important; }
 
   /* page-content: PC에서 실제 스크롤 영역 */
   .page-content {
@@ -196,6 +196,109 @@ a { text-decoration: none; color: inherit; }
     display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
   }
   .status-bar span { color: #fff; font-size: 12px; font-weight: 600; }
+
+  /* 모바일: 사이드바 대체 — 로그인 정보 + 로그아웃 */
+  .mobile-user-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--bg1);
+    border-bottom: 2px solid var(--acc3);
+    flex-shrink: 0;
+    box-shadow: var(--sh-xs);
+  }
+  .mobile-user-bar-profile {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-user-bar-profile:active { opacity: 0.92; }
+  .mobile-user-bar-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    overflow: hidden;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, #a78bfa, #6c63ff);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid var(--acc3);
+  }
+  .mobile-user-bar-avatar img { width: 100%; height: 100%; object-fit: cover; }
+  .mobile-user-bar-avatar span {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 800;
+  }
+  .mobile-user-bar-text { flex: 1; min-width: 0; }
+  .mobile-user-bar-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--navy);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-user-bar-academy {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--slate3);
+  }
+  .mobile-user-bar-academy img {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+  .mobile-user-bar-academy span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mobile-user-bar-logout {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 8px 12px;
+    border-radius: var(--r-sm);
+    background: rgba(240, 68, 56, 0.12);
+    color: #f87171;
+    border: 1px solid rgba(240, 68, 56, 0.22);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .mobile-user-bar-logout svg {
+    width: 13px;
+    height: 13px;
+    stroke: #f87171;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+  .mobile-user-bar-logout:active { opacity: 0.9; }
 
   .top-bar {
     background: var(--bg1); border-bottom: 1px solid var(--border);

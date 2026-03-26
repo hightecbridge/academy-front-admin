@@ -158,6 +158,39 @@ export default function Layout({ children }: { children: ReactNode }) {
           <span>100%</span>
         </div>
 
+        {/* 모바일: 사이드바에 있는 사용자 정보·로그아웃 (≤768px에서만 표시) */}
+        <div className="mobile-user-bar">
+          <button
+            type="button"
+            className="mobile-user-bar-profile"
+            onClick={() => navigate('/profile')}
+            title="회원정보 관리"
+          >
+            <div className="mobile-user-bar-avatar">
+              {user?.profileImage
+                ? <img src={user.profileImage} alt="" />
+                : <span>{(user?.name ?? '관')[0]}</span>}
+            </div>
+            <div className="mobile-user-bar-text">
+              <div className="mobile-user-bar-name">{user?.name ?? '관리자'}</div>
+              <div className="mobile-user-bar-academy">
+                {user?.academyLogo && (
+                  <img src={user.academyLogo} alt="" />
+                )}
+                <span>{user?.academyName ?? 'Hi Academy'}</span>
+              </div>
+            </div>
+          </button>
+          <button type="button" className="mobile-user-bar-logout" onClick={handleLogout}>
+            <svg viewBox="0 0 24 24">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+              <polyline points="16 17 21 12 16 7" />
+              <line x1="21" y1="12" x2="9" y2="12" />
+            </svg>
+            로그아웃
+          </button>
+        </div>
+
         {/* 페이지 컨텐츠 */}
         {children}
 
