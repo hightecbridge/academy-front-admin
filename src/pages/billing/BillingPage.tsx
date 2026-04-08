@@ -9,7 +9,7 @@ import {
   priceKrwPerMonth,
   type PlanId,
   type BillingMode,
-} from '@shared/pricingPlans'
+} from '../../config/pricingPlans'
 
 interface BillingSummary {
   trialEndsAt: string | null
