@@ -19,7 +19,7 @@ const GROUPS = [
     { path: '/message',  label: '메시지',   icon: 'msg', badge: true },
   ]},
   { label: '계정', items: [
-    { path: '/billing',  label: '이용요금관리', icon: 'wallet' },
+    { path: '/billing',  label: '이용요금관리', mobileLabel: '이용요금', icon: 'wallet' },
   ]},
 ]
 const ALL = GROUPS.flatMap(g => g.items)
@@ -206,7 +206,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <div key={item.path} className={`nav-item${active ? ' active' : ''}`} onClick={() => navigate(item.path)}>
                 <Icon name={item.icon} active={active}/>
                 <span style={{ color: active ? 'var(--acc)' : 'var(--slate3)', fontSize: 8, fontWeight: active ? 700 : 400 }}>
-                  {item.label}
+                  {'mobileLabel' in item ? (item.mobileLabel ?? item.label) : item.label}
                 </span>
                 {item.badge && <div className="nav-badge"/>}
               </div>
