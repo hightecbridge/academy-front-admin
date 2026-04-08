@@ -3,7 +3,7 @@ import axios from 'axios'
 import { ACADEMY_API_BASE_PATH } from '../config/apiBase'
 
 const client = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL ?? ACADEMY_API_BASE_PATH,
+  baseURL: ACADEMY_API_BASE_PATH,
   timeout: 10000,
 })
 
@@ -20,7 +20,8 @@ client.interceptors.response.use(
   (err) => {
     const url = err.config?.url ?? ''
     const isLoginAttempt = url.includes('/admin/auth/login')
-    if (err.response?.status === 401 && !isLoginAttempt) {
+    const isSessionCheck = url.includes('/admin/auth/me')
+    if (err.response?.status === 401 && !isLoginAttempt && !isSessionCheck) {
       localStorage.removeItem('hiacademy_token')
       localStorage.removeItem('hiacademy_user')
       window.location.href = '/login'

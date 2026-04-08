@@ -21,7 +21,16 @@ import HomeworkPage from './pages/attend/HomeworkPage'
 import LoginPage from './pages/auth/LoginPage'
 import SignupPage from './pages/auth/SignupPage'
 import ProfilePage from './pages/auth/ProfilePage'
-import { useAuthStore, restoreSession } from './store/authStore'
+import BillingPage from './pages/billing/BillingPage'
+import { useAuthStore } from './store/authStore'
+
+function AuthSplash() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg2)' }}>
+      <div style={{ color: 'var(--slate2)', fontSize: 14 }}>세션 확인 중…</div>
+    </div>
+  )
+}
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()
@@ -30,10 +39,13 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 }
 
 export default function App() {
-  const { user } = useAuthStore()
+  const { user, authReady } = useAuthStore()
 
-  // 새로고침 시 세션 복원
-  useEffect(() => { restoreSession() }, [])
+  useEffect(() => {
+    void useAuthStore.getState().bootstrap()
+  }, [])
+
+  if (!authReady) return <AuthSplash />
 
   return (
     <Routes>
@@ -73,6 +85,7 @@ export default function App() {
               <Route path="/attend/:cid/stats" element={<AttendStatsPage />} />
               <Route path="/attend/:cid/homework" element={<HomeworkPage />} />
               <Route path="/message"         element={<MessagePage />} />
+              <Route path="/billing"         element={<BillingPage />} />
               <Route path="/profile"         element={<ProfilePage />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />

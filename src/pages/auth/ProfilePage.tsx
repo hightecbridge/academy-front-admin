@@ -218,6 +218,18 @@ export default function ProfilePage() {
 
       <div className="page-content-body">
 
+        <div className="sec" style={{ marginBottom: 8 }}>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ width: '100%', justifyContent: 'space-between', display: 'flex', alignItems: 'center', padding: '14px 16px' }}
+            onClick={() => navigate('/billing')}
+          >
+            <span style={{ fontWeight: 700, color: 'var(--navy)' }}>이용 요금 · 문자 포인트</span>
+            <span style={{ color: 'var(--acc)', fontWeight: 700 }}>이용요금관리 →</span>
+          </button>
+        </div>
+
         {/* 프로필 헤더 */}
         <div className="sec">
           <div style={{
