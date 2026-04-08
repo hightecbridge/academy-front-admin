@@ -225,7 +225,7 @@ export default function ProfilePage() {
             style={{ width: '100%', justifyContent: 'space-between', display: 'flex', alignItems: 'center', padding: '14px 16px' }}
             onClick={() => navigate('/billing')}
           >
-            <span style={{ fontWeight: 700, color: 'var(--navy)' }}>이용 요금 · 문자 포인트</span>
+            <span style={{ fontWeight: 700, color: 'var(--navy)' }}>이용 요금 · 하이아카데미 포인트</span>
             <span style={{ color: 'var(--acc)', fontWeight: 700 }}>이용요금관리 →</span>
           </button>
         </div>

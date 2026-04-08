@@ -22,6 +22,7 @@ import LoginPage from './pages/auth/LoginPage'
 import SignupPage from './pages/auth/SignupPage'
 import ProfilePage from './pages/auth/ProfilePage'
 import BillingPage from './pages/billing/BillingPage'
+import PointChargePage from './pages/billing/PointChargePage'
 import { useAuthStore } from './store/authStore'
 
 function AuthSplash() {
@@ -86,6 +87,7 @@ export default function App() {
               <Route path="/attend/:cid/homework" element={<HomeworkPage />} />
               <Route path="/message"         element={<MessagePage />} />
               <Route path="/billing"         element={<BillingPage />} />
+              <Route path="/billing/charge" element={<PointChargePage />} />
               <Route path="/profile"         element={<ProfilePage />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
