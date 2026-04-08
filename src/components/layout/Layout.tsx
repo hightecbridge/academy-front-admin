@@ -5,7 +5,15 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useDataStore } from '../../store/dataStore'
 
-const GROUPS = [
+type NavItem = {
+  path: string
+  label: string
+  mobileLabel?: string
+  icon: string
+  badge?: boolean
+}
+
+const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   { label: '관리', items: [
     { path: '/',         label: '홈',      icon: 'grid' },
     { path: '/parents',  label: '학부모',   icon: 'people' },
@@ -206,7 +214,7 @@ export default function Layout({ children }: { children: ReactNode }) {
               <div key={item.path} className={`nav-item${active ? ' active' : ''}`} onClick={() => navigate(item.path)}>
                 <Icon name={item.icon} active={active}/>
                 <span style={{ color: active ? 'var(--acc)' : 'var(--slate3)', fontSize: 8, fontWeight: active ? 700 : 400 }}>
-                  {'mobileLabel' in item ? (item.mobileLabel ?? item.label) : item.label}
+                  {item.mobileLabel ?? item.label}
                 </span>
                 {item.badge && <div className="nav-badge"/>}
               </div>
