@@ -1,5 +1,5 @@
 // src/App.tsx
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
 import Layout from './components/layout/Layout'
 import HomePage from './pages/home/HomePage'
@@ -23,7 +23,9 @@ import SignupPage from './pages/auth/SignupPage'
 import ProfilePage from './pages/auth/ProfilePage'
 import BillingPage from './pages/billing/BillingPage'
 import PointChargePage from './pages/billing/PointChargePage'
+import PaymentHistoryPage from './pages/billing/PaymentHistoryPage'
 import { useAuthStore } from './store/authStore'
+import { useBillingAccessStore } from './store/billingAccessStore'
 
 function AuthSplash() {
   return (
@@ -36,6 +38,30 @@ function AuthSplash() {
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { user } = useAuthStore()
   if (!user) return <Navigate to="/login" replace />
+  return <>{children}</>
+}
+
+function BillingSplash() {
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg2)' }}>
+      <div style={{ color: 'var(--slate2)', fontSize: 14 }}>이용 요금 확인 중…</div>
+    </div>
+  )
+}
+
+/** 체험·구독 만료 등 결제 필요 시 /billing 만 허용하고 나머지 경로는 결제 페이지로 보냄 */
+function BillingGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+  const { ready, paymentRequired } = useBillingAccessStore()
+
+  useEffect(() => {
+    void useBillingAccessStore.getState().refresh()
+  }, [])
+
+  if (!ready) return <BillingSplash />
+  if (paymentRequired && !location.pathname.startsWith('/billing')) {
+    return <Navigate to="/billing" replace />
+  }
   return <>{children}</>
 }
 
@@ -57,6 +83,7 @@ export default function App() {
       {/* 관리자 페이지 (Layout + 인증 필요) */}
       <Route path="/*" element={
         <PrivateRoute>
+          <BillingGate>
           <Layout>
             <Routes>
               <Route path="/"  element={<HomePage />} />
@@ -88,11 +115,13 @@ export default function App() {
               <Route path="/message"         element={<MessagePage />} />
               <Route path="/billing"         element={<BillingPage />} />
               <Route path="/billing/charge" element={<PointChargePage />} />
+              <Route path="/billing/payments" element={<PaymentHistoryPage />} />
               <Route path="/profile"         element={<ProfilePage />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Layout>
+          </BillingGate>
         </PrivateRoute>
       } />
     </Routes>

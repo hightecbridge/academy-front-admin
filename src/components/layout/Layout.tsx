@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
+import { useBillingAccessStore } from '../../store/billingAccessStore'
 import { useDataStore } from '../../store/dataStore'
 
 type NavItem = {
@@ -28,9 +29,17 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   ]},
   { label: '계정', items: [
     { path: '/billing',  label: '이용요금관리', mobileLabel: '이용요금', icon: 'wallet' },
+    { path: '/billing/payments', label: '결제 이력', mobileLabel: '결제', icon: 'receipt' },
   ]},
 ]
 const ALL = GROUPS.flatMap(g => g.items)
+
+function navItemActive(pathname: string, itemPath: string): boolean {
+  if (itemPath === '/billing/payments') return pathname === '/billing/payments'
+  if (itemPath === '/billing') return pathname === '/billing' || pathname === '/billing/charge'
+  if (itemPath === '/') return pathname === '/' || pathname === ''
+  return pathname === itemPath || pathname.startsWith(`${itemPath}/`)
+}
 
 function Icon({ name, active }: { name: string; active: boolean }) {
   const s = active ? 'var(--acc)' : 'currentColor'
@@ -44,6 +53,7 @@ function Icon({ name, active }: { name: string; active: boolean }) {
     doc:    <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/></>,
     msg:    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>,
     wallet: <><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></>,
+    receipt: <><path d="M4 2h16v20l-4-2-4 2-4-2-4 2V2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/></>,
   }
   return <svg viewBox="0 0 24 24" fill="none" stroke={s} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{p[name]}</svg>
 }
@@ -52,16 +62,21 @@ export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { user, logout } = useAuthStore()
+  const billingLocked = useBillingAccessStore((s) => s.paymentRequired)
   const { fetchClasses, fetchParents, fetchNotices, fetchEvents } = useDataStore()
-  const base = '/' + pathname.split('/')[1]
+  const goNav = (path: string) => {
+    if (billingLocked && !path.startsWith('/billing')) return
+    navigate(path)
+  }
 
-  // 로그인 후 첫 마운트 시 전체 데이터 로드
+  // 결제 잠금 중에는 목록 API 호출 생략 · 결제 완료 후 잠금 해제되면 로드
   useEffect(() => {
-    fetchClasses()
-    fetchParents()
-    fetchNotices()
-    fetchEvents()
-  }, [])
+    if (billingLocked) return
+    void fetchClasses()
+    void fetchParents()
+    void fetchNotices()
+    void fetchEvents()
+  }, [billingLocked, fetchClasses, fetchParents, fetchNotices, fetchEvents])
 
   const handleLogout = () => {
     if (window.confirm('로그아웃 하시겠습니까?')) {
@@ -94,9 +109,15 @@ export default function Layout({ children }: { children: ReactNode }) {
             <div key={g.label}>
               <div className="sidebar-section-label">{g.label}</div>
               {g.items.map(item => {
-                const active = base === item.path
+                const active = navItemActive(pathname, item.path)
+                const disabled = billingLocked && !item.path.startsWith('/billing')
                 return (
-                  <div key={item.path} className={`sidebar-nav-item${active ? ' active' : ''}`} onClick={() => navigate(item.path)}>
+                  <div
+                    key={item.path}
+                    className={`sidebar-nav-item${active ? ' active' : ''}${disabled ? ' nav-disabled' : ''}`}
+                    onClick={() => goNav(item.path)}
+                    title={disabled ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : undefined}
+                  >
                     <Icon name={item.icon} active={active}/>
                     <span className="sidebar-nav-label">{item.label}</span>
                     {item.badge && <div className="sidebar-nav-badge"/>}
@@ -110,9 +131,19 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* 푸터 — 사용자 정보 + 로그아웃 */}
         <div className="sidebar-footer">
           <div
-            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer', borderRadius: 10, padding: '6px 4px', transition: 'background .12s' }}
-            onClick={() => navigate('/profile')}
-            title="회원정보 관리"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 10,
+              cursor: billingLocked ? 'not-allowed' : 'pointer',
+              borderRadius: 10,
+              padding: '6px 4px',
+              transition: 'background .12s',
+              opacity: billingLocked ? 0.45 : 1,
+            }}
+            onClick={() => { if (!billingLocked) navigate('/profile') }}
+            title={billingLocked ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : '회원정보 관리'}
           >
             {/* 프로필 아바타 or 이미지 */}
             <div style={{ width: 34, height: 34, borderRadius: 10, overflow: 'hidden', flexShrink: 0, background: 'linear-gradient(135deg,#A78BFA,#6C63FF)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid rgba(255,255,255,0.15)' }}>
@@ -178,8 +209,9 @@ export default function Layout({ children }: { children: ReactNode }) {
           <button
             type="button"
             className="mobile-user-bar-profile"
-            onClick={() => navigate('/profile')}
-            title="회원정보 관리"
+            onClick={() => { if (!billingLocked) navigate('/profile') }}
+            title={billingLocked ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : '회원정보 관리'}
+            style={billingLocked ? { opacity: 0.45, cursor: 'not-allowed' } : undefined}
           >
             <div className="mobile-user-bar-avatar">
               {user?.profileImage
@@ -209,9 +241,15 @@ export default function Layout({ children }: { children: ReactNode }) {
         {/* 모바일 하단 탭 */}
         <div className="bottom-nav">
           {ALL.map(item => {
-            const active = base === item.path
+            const active = navItemActive(pathname, item.path)
+            const disabled = billingLocked && !item.path.startsWith('/billing')
             return (
-              <div key={item.path} className={`nav-item${active ? ' active' : ''}`} onClick={() => navigate(item.path)}>
+              <div
+                key={item.path}
+                className={`nav-item${active ? ' active' : ''}${disabled ? ' nav-disabled' : ''}`}
+                onClick={() => goNav(item.path)}
+                title={disabled ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : undefined}
+              >
                 <Icon name={item.icon} active={active}/>
                 <span style={{ color: active ? 'var(--acc)' : 'var(--slate3)', fontSize: 8, fontWeight: active ? 700 : 400 }}>
                   {item.mobileLabel ?? item.label}

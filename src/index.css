@@ -108,6 +108,8 @@ a { text-decoration: none; color: inherit; }
     width: 3px; background: linear-gradient(180deg, #A78BFA, #6C63FF); border-radius: 0 2px 2px 0;
   }
   .sidebar-nav-item svg { width: 17px; height: 17px; flex-shrink: 0; }
+  .sidebar-nav-item.nav-disabled { opacity: 0.35; cursor: not-allowed; }
+  .sidebar-nav-item.nav-disabled:hover { background: transparent; color: rgba(255,255,255,.5); }
   .sidebar-nav-label { font-size: 13px; font-weight: 500; white-space: nowrap; }
   .sidebar-nav-badge { width: 6px; height: 6px; background: var(--err); border-radius: 50%; margin-left: auto; flex-shrink: 0; }
 
@@ -345,6 +347,7 @@ a { text-decoration: none; color: inherit; }
   .nav-item span { font-size: 8px; }
   .nav-item.active svg { stroke: var(--acc) !important; filter: drop-shadow(0 0 4px rgba(108,99,255,.4)); }
   .nav-item.active span { color: var(--acc); font-weight: 600; }
+  .nav-item.nav-disabled { opacity: 0.35; cursor: not-allowed; }
   .nav-badge { width: 6px; height: 6px; background: var(--err); border-radius: 50%; position: absolute; top: 6px; right: 8px; }
 
   .fab { position: absolute; bottom: 80px; right: 16px; z-index: 10; }

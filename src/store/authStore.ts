@@ -1,6 +1,7 @@
 // src/store/authStore.ts
 import { create } from 'zustand'
 import client from '../api/client'
+import { useBillingAccessStore } from './billingAccessStore'
 
 export interface AuthUser {
   id: string
@@ -212,6 +213,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     localStorage.removeItem(TOKEN_KEY)
     localStorage.removeItem(USER_KEY)
+    useBillingAccessStore.getState().reset()
     set({ user: null, authReady: true })
   },
 
