@@ -29,7 +29,6 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   ]},
   { label: '계정', items: [
     { path: '/billing',  label: '이용요금관리', mobileLabel: '이용요금', icon: 'wallet' },
-    { path: '/billing/payments', label: '결제 이력', mobileLabel: '결제', icon: 'receipt' },
   ]},
 ]
 const ALL = GROUPS.flatMap(g => g.items)
