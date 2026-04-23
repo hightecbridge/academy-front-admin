@@ -61,14 +61,23 @@ export default function MessagePage() {
   }, [fetchSenderNumbers, fetchMessageSends])
 
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [imageFile, setImageFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    if (file.size > 5 * 1024 * 1024) { alert('5MB 이하 이미지만 첨부 가능합니다.'); return }
+    const lower = file.name.toLowerCase()
+    if (!(lower.endsWith('.jpg') || lower.endsWith('.jpeg'))) {
+      alert('MMS 첨부는 JPG/JPEG만 가능합니다.')
+      return
+    }
+    if (file.size > 300 * 1024) { alert('MMS 첨부는 300KB 이하만 가능합니다.'); return }
     const reader = new FileReader()
-    reader.onload = (ev) => setImagePreview(ev.target?.result as string)
+    reader.onload = (ev) => {
+      setImagePreview(ev.target?.result as string)
+      setImageFile(file)
+    }
     reader.readAsDataURL(file)
   }
 
@@ -88,6 +97,25 @@ export default function MessagePage() {
     return line.length > 80 ? `${line.slice(0, 80)}…` : line
   }
 
+  const normalizePhone = (v: string) => v.replace(/[^\d]/g, '')
+  const senderNo = normalizePhone(senderOptions.find((s) => s.id === selectedSenderId)?.number ?? '')
+
+  const uniqueRecipientPhones = (phones: string[]) =>
+    Array.from(new Set(phones.map(normalizePhone).filter((p) => p.length > 0)))
+
+  const resolveMessageType = (text: string, hasImage: boolean): 'SMS' | 'LMS' | 'MMS' => {
+    if (hasImage) return 'MMS'
+    const bytes = new TextEncoder().encode(text).length
+    return bytes <= 90 ? 'SMS' : 'LMS'
+  }
+
+  const imageToAttachFiles = async () => {
+    if (!imagePreview || !imageFile) return undefined
+    const base64 = imagePreview.includes(',') ? imagePreview.split(',')[1] : imagePreview
+    if (!base64) return undefined
+    return [{ fileName: imageFile.name || 'attachment.jpg', fileBodyBase64: base64 }]
+  }
+
   const formatLogDate = (iso: string) => {
     if (!iso) return ''
     const d = new Date(iso)
@@ -99,6 +127,11 @@ export default function MessagePage() {
     if (kind === 'CLASS') return 'badge-blue'
     if (kind === 'ALL') return 'badge-gray'
     return 'badge-amber'
+  }
+
+  const providerBadge = (provider?: string | null) => {
+    if (provider === 'NHN') return 'badge-gray'
+    return 'badge-blue'
   }
 
   const histClass = messageSends.filter((h) => h.kind === 'CLASS')
@@ -216,11 +249,11 @@ export default function MessagePage() {
   const ImageAttach = () => (
     <div>
       <label className="input-label">이미지 첨부 (선택)</label>
-      <input ref={fileRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleImageSelect} />
+      <input ref={fileRef} type="file" accept=".jpg,.jpeg,image/jpeg" style={{ display: 'none' }} onChange={handleImageSelect} />
       {imagePreview ? (
         <div style={{ marginTop: 8, position: 'relative' }}>
           <img src={imagePreview} alt="첨부" style={{ width: '100%', borderRadius: 8, maxHeight: 160, objectFit: 'cover', border: '1px solid var(--border)' }} />
-          <button onClick={() => { setImagePreview(null); if (fileRef.current) fileRef.current.value = '' }}
+          <button onClick={() => { setImagePreview(null); setImageFile(null); if (fileRef.current) fileRef.current.value = '' }}
             style={{ position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: '50%', background: 'rgba(0,0,0,0.55)', border: 'none', color: '#fff', fontSize: 14, cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
       ) : (
@@ -229,7 +262,7 @@ export default function MessagePage() {
           <svg style={{ width: 18, height: 18, stroke: 'var(--slate3)', fill: 'none', strokeWidth: 1.5, strokeLinecap: 'round' }} viewBox="0 0 24 24">
             <rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>
           </svg>
-          <span style={{ fontSize: 12, color: 'var(--slate3)' }}>이미지 첨부 (최대 5MB)</span>
+          <span style={{ fontSize: 12, color: 'var(--slate3)' }}>이미지 첨부 (JPG/JPEG, 최대 300KB)</span>
         </button>
       )}
     </div>
@@ -273,17 +306,33 @@ export default function MessagePage() {
                 style={{ opacity: (selectedCount === 0 || msg.trim().length === 0) ? 0.5 : 1 }}
                 onClick={async () => {
                   const targetLabel = selectedClasses.map((c) => c.name).join('·')
+                  if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                   try {
+                    const selectedClassNames = new Set(selectedClasses.map((c) => c.name))
+                    const selectedParentIds = new Set(
+                      allStu.filter((s) => selectedClassNames.has(s.cls)).map((s) => s.pid),
+                    )
+                    const recipientPhones = uniqueRecipientPhones(
+                      parents.filter((p) => selectedParentIds.has(p.pid)).map((p) => p.phone),
+                    )
+                    const messageType = resolveMessageType(msg.trim(), !!imageFile)
+                    const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
                       kind: 'CLASS',
                       targetLabel,
                       title: msgTitle(msg),
                       bodyPreview: msg.trim().slice(0, 500),
-                      recipientCount: selectedCount,
+                      recipientCount: recipientPhones.length,
+                      messageType,
+                      sendNo: senderNo,
+                      body: msg.trim(),
+                      recipientPhones,
+                      attachFiles,
                     })
-                    showToast(`${targetLabel} ${selectedCount}명에게 발송 완료`)
+                    showToast(`${targetLabel} ${recipientPhones.length}명에게 발송 완료`)
                     setMsg('')
                     setImagePreview(null)
+                    setImageFile(null)
                     await fetchMessageSends()
                   } catch (e: any) {
                     alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
@@ -300,7 +349,7 @@ export default function MessagePage() {
                 ) : (
                   histClass.map((h) => (
                     <div key={h.id} style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div>
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={providerBadge(h.provider)}>{h.provider ?? 'ALIGO'}</Badge><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
                       <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
                     </div>
                   ))
@@ -323,17 +372,27 @@ export default function MessagePage() {
                 disabled={msg.trim().length === 0}
                 style={{ opacity: msg.trim().length === 0 ? 0.5 : 1 }}
                 onClick={async () => {
+                  if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                   try {
+                    const recipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
+                    const messageType = resolveMessageType(msg.trim(), !!imageFile)
+                    const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
                       kind: 'ALL',
                       targetLabel: '전체',
                       title: msgTitle(msg),
                       bodyPreview: msg.trim().slice(0, 500),
-                      recipientCount: parents.length,
+                      recipientCount: recipientPhones.length,
+                      messageType,
+                      sendNo: senderNo,
+                      body: msg.trim(),
+                      recipientPhones,
+                      attachFiles,
                     })
-                    showToast(`전체 ${parents.length}명에게 발송 완료`)
+                    showToast(`전체 ${recipientPhones.length}명에게 발송 완료`)
                     setMsg('')
                     setImagePreview(null)
+                    setImageFile(null)
                     await fetchMessageSends()
                   } catch (e: any) {
                     alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
@@ -350,7 +409,7 @@ export default function MessagePage() {
                 ) : (
                   histAll.map((h) => (
                     <div key={h.id} style={{ padding: '12px 16px' }}>
-                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div>
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={providerBadge(h.provider)}>{h.provider ?? 'ALIGO'}</Badge><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
                       <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
                     </div>
                   ))
@@ -402,16 +461,33 @@ export default function MessagePage() {
                 <button className="btn-red" style={{ marginTop: 14 }}
                   onClick={async () => {
                     const n = checkedUnpaid.size
+                    if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                     try {
+                      const selectedParentIds = new Set(
+                        unpaid.filter((s) => checkedUnpaid.has(s.sid)).map((s) => s.pid),
+                      )
+                      const recipientPhones = uniqueRecipientPhones(
+                        parents.filter((p) => selectedParentIds.has(p.pid)).map((p) => p.phone),
+                      )
+                      const paymentBody = `안녕하세요. 미납 결제 내역이 있어 안내드립니다. 자세한 금액은 학원으로 문의 부탁드립니다.`
+                      const messageType = resolveMessageType(paymentBody, !!imageFile)
+                      const attachFiles = await imageToAttachFiles()
                       await saveMessageSendLog({
                         kind: 'PAYMENT',
                         targetLabel: '결제',
                         title: '카드결제 문자',
                         bodyPreview: `미납 학부모 ${n}명 대상`,
-                        recipientCount: n,
+                        recipientCount: recipientPhones.length,
+                        messageType,
+                        sendNo: senderNo,
+                        body: paymentBody,
+                        recipientPhones,
+                        attachFiles,
                       })
-                      showToast(`${n}명에게 카드결제 문자 발송 완료`)
+                      showToast(`${recipientPhones.length}명에게 카드결제 문자 발송 완료`)
                       setCheckedUnpaid(new Set())
+                      setImagePreview(null)
+                      setImageFile(null)
                       await fetchMessageSends()
                     } catch (e: any) {
                       alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
@@ -429,7 +505,7 @@ export default function MessagePage() {
                 ) : (
                   histPay.map((h) => (
                     <div key={h.id} style={{ padding: '12px 16px' }}>
-                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div>
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={providerBadge(h.provider)}>{h.provider ?? 'ALIGO'}</Badge><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
                       <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
                     </div>
                   ))

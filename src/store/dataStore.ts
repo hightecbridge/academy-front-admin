@@ -33,6 +33,12 @@ interface DataState {
     title: string
     bodyPreview: string
     recipientCount: number
+    messageType?: 'SMS' | 'LMS' | 'MMS'
+    sendNo?: string
+    body?: string
+    recipientPhones?: string[]
+    attachFileIdList?: number[]
+    attachFiles?: { fileName: string; fileBodyBase64: string }[]
   }) => Promise<void>
 
   addClass:    (cls: Omit<ClassRoom, 'cid' | 'createdAt'>) => Promise<void>
@@ -159,6 +165,7 @@ function toMessageSendLog(d: any): MessageSendLog {
   return {
     id: d.id,
     kind: d.kind as MessageSendLog['kind'],
+    provider: (d.provider ?? null) as MessageSendLog['provider'],
     targetLabel: d.targetLabel ?? '',
     title: d.title ?? '',
     bodyPreview: d.bodyPreview ?? '',
@@ -277,6 +284,12 @@ export const useDataStore = create<DataState>((set, get) => ({
       title: p.title,
       bodyPreview: p.bodyPreview,
       recipientCount: p.recipientCount,
+      messageType: p.messageType,
+      sendNo: p.sendNo,
+      body: p.body,
+      recipientPhones: p.recipientPhones,
+      attachFileIdList: p.attachFileIdList,
+      attachFiles: p.attachFiles,
     })
     const created = toMessageSendLog(res.data.data)
     set(s => ({ messageSends: [created, ...s.messageSends.filter(x => x.id !== created.id)] }))

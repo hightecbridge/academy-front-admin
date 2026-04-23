@@ -92,6 +92,7 @@ export interface SenderNumber {
 export interface MessageSendLog {
   id: number
   kind: 'CLASS' | 'ALL' | 'PAYMENT'
+  provider?: 'ALIGO' | 'NHN' | null
   targetLabel: string
   title: string
   bodyPreview: string
