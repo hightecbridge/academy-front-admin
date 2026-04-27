@@ -1,6 +1,6 @@
 // src/components/layout/Layout.tsx
 import type { ReactNode } from 'react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
 import { useBillingAccessStore } from '../../store/billingAccessStore'
@@ -33,6 +33,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   ]},
 ]
 const ALL = GROUPS.flatMap(g => g.items)
+const MOBILE_PRIMARY_PATHS = ['/', '/payment', '/payment-message', '/message', '__more__'] as const
 
 function navItemActive(pathname: string, itemPath: string): boolean {
   if (itemPath === '/billing/payments') return pathname === '/billing/payments'
@@ -56,6 +57,7 @@ function Icon({ name, active }: { name: string; active: boolean }) {
     msg:    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>,
     wallet: <><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></>,
     receipt: <><path d="M4 2h16v20l-4-2-4 2-4-2-4 2V2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/></>,
+    more: <><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></>,
   }
   return <svg viewBox="0 0 24 24" fill="none" stroke={s} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{p[name]}</svg>
 }
@@ -66,10 +68,20 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { user, logout } = useAuthStore()
   const billingLocked = useBillingAccessStore((s) => s.paymentRequired)
   const { fetchClasses, fetchParents, fetchNotices, fetchEvents } = useDataStore()
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const goNav = (path: string) => {
     if (billingLocked && !path.startsWith('/billing')) return
     navigate(path)
+    setMobileMenuOpen(false)
   }
+  const mobilePrimaryItems: NavItem[] = [
+    { path: '/', label: '홈', icon: 'grid' },
+    { path: '/payment', label: '수납', icon: 'money' },
+    { path: '/payment-message', label: '결제문자', icon: 'receipt' },
+    { path: '/message', label: '메시지', icon: 'msg', badge: true },
+    { path: '__more__', label: '더보기', icon: 'more' },
+  ]
+  const mobileSecondaryItems = ALL.filter((item) => !MOBILE_PRIMARY_PATHS.includes(item.path as (typeof MOBILE_PRIMARY_PATHS)[number]))
 
   // 결제 잠금 중에는 목록 API 호출 생략 · 결제 완료 후 잠금 해제되면 로드
   useEffect(() => {
@@ -242,18 +254,26 @@ export default function Layout({ children }: { children: ReactNode }) {
 
         {/* 모바일 하단 탭 */}
         <div className="bottom-nav">
-          {ALL.map(item => {
+          {mobilePrimaryItems.map(item => {
             const active = navItemActive(pathname, item.path)
             const disabled = billingLocked && !item.path.startsWith('/billing')
+            const isMore = item.path === '__more__'
+            const isMoreActive = isMore && mobileMenuOpen
             return (
               <div
                 key={item.path}
-                className={`nav-item${active ? ' active' : ''}${disabled ? ' nav-disabled' : ''}`}
-                onClick={() => goNav(item.path)}
+                className={`nav-item${active || isMoreActive ? ' active' : ''}${disabled && !isMore ? ' nav-disabled' : ''}`}
+                onClick={() => {
+                  if (isMore) {
+                    setMobileMenuOpen((v) => !v)
+                    return
+                  }
+                  goNav(item.path)
+                }}
                 title={disabled ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : undefined}
               >
-                <Icon name={item.icon} active={active}/>
-                <span style={{ color: active ? 'var(--acc)' : 'var(--slate3)', fontSize: 8, fontWeight: active ? 700 : 400 }}>
+                <Icon name={item.icon} active={active || isMoreActive}/>
+                <span style={{ color: active || isMoreActive ? 'var(--acc)' : 'var(--slate3)', fontSize: 8, fontWeight: active || isMoreActive ? 700 : 400 }}>
                   {item.mobileLabel ?? item.label}
                 </span>
                 {item.badge && <div className="nav-badge"/>}
@@ -261,6 +281,67 @@ export default function Layout({ children }: { children: ReactNode }) {
             )
           })}
         </div>
+        {mobileMenuOpen && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(16,24,40,0.35)',
+              zIndex: 300,
+              display: 'flex',
+              alignItems: 'flex-end',
+            }}
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            <div
+              style={{
+                width: '100%',
+                background: 'var(--bg1)',
+                borderTopLeftRadius: 16,
+                borderTopRightRadius: 16,
+                borderTop: '1px solid var(--border)',
+                boxShadow: '0 -6px 20px rgba(16,24,40,.12)',
+                padding: '10px 14px 84px',
+                maxHeight: '65vh',
+                overflowY: 'auto',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--slate2)', marginBottom: 8 }}>전체 메뉴</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {mobileSecondaryItems.map((item) => {
+                  const active = navItemActive(pathname, item.path)
+                  const disabled = billingLocked && !item.path.startsWith('/billing')
+                  return (
+                    <button
+                      key={item.path}
+                      type="button"
+                      onClick={() => goNav(item.path)}
+                      disabled={disabled}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        padding: '10px 12px',
+                        borderRadius: 10,
+                        border: active ? '1px solid var(--acc3)' : '1px solid var(--border)',
+                        background: active ? 'var(--acc2)' : 'var(--bg1)',
+                        color: active ? 'var(--acc)' : 'var(--slate)',
+                        opacity: disabled ? 0.4 : 1,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        textAlign: 'left',
+                      }}
+                    >
+                      <Icon name={item.icon} active={active} />
+                      <span>{item.label}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )
