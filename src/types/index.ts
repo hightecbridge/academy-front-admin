@@ -97,6 +97,9 @@ export interface MessageSendLog {
   title: string
   bodyPreview: string
   recipientCount: number
+  messageType?: 'KAKAO_ALIMTALK' | 'SMS' | 'LMS' | 'MMS' | 'PAYMENT_SMS' | 'PAYMENT_NUDGE' | null
+  deductedPoints?: number | null
+  remainingPoints?: number | null
   createdAt: string
 }
 

@@ -33,7 +33,7 @@ interface DataState {
     title: string
     bodyPreview: string
     recipientCount: number
-    messageType?: 'SMS' | 'LMS' | 'MMS'
+    messageType?: 'SMS' | 'LMS' | 'MMS' | 'PAYMENT_SMS' | 'PAYMENT_NUDGE'
     sendNo?: string
     body?: string
     recipientPhones?: string[]
@@ -162,6 +162,12 @@ function toSenderNumber(d: any): SenderNumber {
 }
 
 function toMessageSendLog(d: any): MessageSendLog {
+  const messageType =
+    typeof d.messageType === 'string' && d.messageType.trim().length > 0
+      ? d.messageType
+      : null
+  const deductedPoints = typeof d.deductedPoints === 'number' ? d.deductedPoints : null
+  const remainingPoints = typeof d.remainingPoints === 'number' ? d.remainingPoints : null
   return {
     id: d.id,
     kind: d.kind as MessageSendLog['kind'],
@@ -170,6 +176,9 @@ function toMessageSendLog(d: any): MessageSendLog {
     title: d.title ?? '',
     bodyPreview: d.bodyPreview ?? '',
     recipientCount: typeof d.recipientCount === 'number' ? d.recipientCount : 0,
+    messageType: messageType as MessageSendLog['messageType'],
+    deductedPoints,
+    remainingPoints,
     createdAt: d.createdAt ?? '',
   }
 }

@@ -12,6 +12,7 @@ import ClassFormPage from './pages/class/ClassFormPage'
 import NoticePage from './pages/notice/NoticePage'
 import PaymentPage from './pages/payment/PaymentPage'
 import PaymentDetailPage from './pages/payment/PaymentDetailPage'
+import PaymentMessagePage from './pages/payment/PaymentMessagePage'
 import MessagePage from './pages/message/MessagePage'
 import CalendarPage from './pages/calendar/CalendarPage'
 import AttendListPage from './pages/attend/AttendListPage'
@@ -24,6 +25,7 @@ import ProfilePage from './pages/auth/ProfilePage'
 import BillingPage from './pages/billing/BillingPage'
 import PointChargePage from './pages/billing/PointChargePage'
 import PaymentHistoryPage from './pages/billing/PaymentHistoryPage'
+import PointDeductionHistoryPage from './pages/billing/PointDeductionHistoryPage'
 import { useAuthStore } from './store/authStore'
 import { useBillingAccessStore } from './store/billingAccessStore'
 
@@ -107,6 +109,7 @@ export default function App() {
               <Route path="/notice"          element={<NoticePage />} />
               <Route path="/payment"         element={<PaymentPage />} />
               <Route path="/payment/:sid"    element={<PaymentDetailPage />} />
+              <Route path="/payment-message" element={<PaymentMessagePage />} />
               <Route path="/calendar"        element={<CalendarPage />} />
               <Route path="/attend"          element={<AttendListPage />} />
               <Route path="/attend/:cid/:date" element={<AttendSheetPage />} />
@@ -116,6 +119,7 @@ export default function App() {
               <Route path="/billing"         element={<BillingPage />} />
               <Route path="/billing/charge" element={<PointChargePage />} />
               <Route path="/billing/payments" element={<PaymentHistoryPage />} />
+              <Route path="/billing/point-deductions" element={<PointDeductionHistoryPage />} />
               <Route path="/profile"         element={<ProfilePage />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />

@@ -24,6 +24,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   { label: '운영', items: [
     { path: '/calendar', label: '캘린더',   icon: 'cal' },
     { path: '/payment',  label: '수납',    icon: 'money' },
+    { path: '/payment-message', label: '결제메시지', mobileLabel: '결제문자', icon: 'receipt' },
     { path: '/notice',   label: '공지사항', icon: 'doc' },
     { path: '/message',  label: '메시지',   icon: 'msg', badge: true },
   ]},
@@ -35,7 +36,9 @@ const ALL = GROUPS.flatMap(g => g.items)
 
 function navItemActive(pathname: string, itemPath: string): boolean {
   if (itemPath === '/billing/payments') return pathname === '/billing/payments'
-  if (itemPath === '/billing') return pathname === '/billing' || pathname === '/billing/charge'
+  if (itemPath === '/billing') {
+    return pathname === '/billing' || pathname === '/billing/charge' || pathname === '/billing/payments' || pathname === '/billing/point-deductions'
+  }
   if (itemPath === '/') return pathname === '/' || pathname === ''
   return pathname === itemPath || pathname.startsWith(`${itemPath}/`)
 }

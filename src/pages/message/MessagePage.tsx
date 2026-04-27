@@ -3,8 +3,20 @@ import React, { useState, useRef } from 'react'
 import { TopBar, TabBar, Badge, useToast, Toast } from '../../components/common'
 import { useDataStore, isFullPaid } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
+import { usePointCosts, type MessageCostType } from '../../hooks/usePointCosts'
+import client from '../../api/client'
 
 export default function MessagePage() {
+  const { costByType, error: pointCostError } = usePointCosts()
+  const [currentPoints, setCurrentPoints] = useState(0)
+  const [selectedHistory, setSelectedHistory] = useState<null | {
+    title: string
+    bodyPreview: string
+    targetLabel: string
+    recipientCount: number
+    createdAt: string
+  }>(null)
+
   const [tabIdx, setTabIdx] = useState(0)
   const [msg, setMsg] = useState('')
   const user = useAuthStore((s) => s.user)
@@ -60,6 +72,18 @@ export default function MessagePage() {
     void fetchMessageSends()
   }, [fetchSenderNumbers, fetchMessageSends])
 
+  React.useEffect(() => {
+    void (async () => {
+      try {
+        const res = await client.get('/admin/billing')
+        const summary = (res.data as { data?: { smsPoints?: number } }).data
+        setCurrentPoints(typeof summary?.smsPoints === 'number' ? summary.smsPoints : 0)
+      } catch {
+        setCurrentPoints(0)
+      }
+    })()
+  }, [])
+
   const [imagePreview, setImagePreview] = useState<string | null>(null)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -109,6 +133,13 @@ export default function MessagePage() {
     return bytes <= 90 ? 'SMS' : 'LMS'
   }
 
+  const messageTypeLabel = (type: MessageCostType) => {
+    if (type === 'KAKAO_ALIMTALK') return '카카오 알림톡'
+    if (type === 'SMS') return 'SMS 단문'
+    if (type === 'LMS') return 'LMS'
+    return 'MMS'
+  }
+
   const imageToAttachFiles = async () => {
     if (!imagePreview || !imageFile) return undefined
     const base64 = imagePreview.includes(',') ? imagePreview.split(',')[1] : imagePreview
@@ -129,10 +160,69 @@ export default function MessagePage() {
     return 'badge-amber'
   }
 
-  const providerBadge = (provider?: string | null) => {
-    if (provider === 'NHN') return 'badge-gray'
-    return 'badge-blue'
-  }
+  const historyDetailModal = selectedHistory ? (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(16,24,40,0.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+      onClick={() => setSelectedHistory(null)}
+    >
+      <div
+        className="card"
+        style={{ width: 'min(560px, 92vw)', maxHeight: '80vh', overflow: 'auto', padding: 18 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="row" style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--navy)' }}>메시지 상세</div>
+          <button
+            type="button"
+            onClick={() => setSelectedHistory(null)}
+            style={{ border: 'none', background: 'none', fontSize: 22, color: 'var(--slate3)', cursor: 'pointer', lineHeight: 1 }}
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ fontSize: 13, color: 'var(--slate2)', lineHeight: 1.8 }}>
+          <div><b style={{ color: 'var(--navy)' }}>제목:</b> {selectedHistory.title}</div>
+          <div><b style={{ color: 'var(--navy)' }}>대상:</b> {selectedHistory.targetLabel}</div>
+          <div><b style={{ color: 'var(--navy)' }}>발송건수:</b> {selectedHistory.recipientCount}명</div>
+          <div><b style={{ color: 'var(--navy)' }}>발송일시:</b> {formatLogDate(selectedHistory.createdAt)}</div>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--slate2)', marginBottom: 6 }}>메시지 내용</div>
+          <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, color: 'var(--slate)', lineHeight: 1.6, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: 12 }}>
+            {selectedHistory.bodyPreview || '(내용 없음)'}
+          </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ marginTop: 10 }}
+            onClick={async () => {
+              const text = selectedHistory.bodyPreview || ''
+              if (!text) {
+                showToast('복사할 메시지 내용이 없습니다.')
+                return
+              }
+              try {
+                await navigator.clipboard.writeText(text)
+                showToast('메시지 내용을 복사했습니다.')
+              } catch {
+                showToast('복사에 실패했습니다.')
+              }
+            }}
+          >
+            메시지 내용 복사
+          </button>
+        </div>
+      </div>
+    </div>
+  ) : null
 
   const histClass = messageSends.filter((h) => h.kind === 'CLASS')
   const histAll = messageSends.filter((h) => h.kind === 'ALL')
@@ -268,12 +358,46 @@ export default function MessagePage() {
     </div>
   )
 
+  const classRecipientPhones = uniqueRecipientPhones(
+    parents
+      .filter((p) => selectedClasses.some((c) => allStu.some((s) => s.pid === p.pid && s.cls === c.name)))
+      .map((p) => p.phone),
+  )
+  const classMessageType = resolveMessageType(msg.trim(), !!imageFile)
+  const classPerCost = costByType[classMessageType]
+  const classTotalCost = classRecipientPhones.length * classPerCost
+  const classInsufficient = classTotalCost > currentPoints
+
+  const allRecipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
+  const allMessageType = resolveMessageType(msg.trim(), !!imageFile)
+  const allPerCost = costByType[allMessageType]
+  const allTotalCost = allRecipientPhones.length * allPerCost
+  const allInsufficient = allTotalCost > currentPoints
+
+  const paymentRecipientPhones = uniqueRecipientPhones(
+    parents
+      .filter((p) => unpaid.filter((s) => checkedUnpaid.has(s.sid)).some((s) => s.pid === p.pid))
+      .map((p) => p.phone),
+  )
+  const paymentBody = '안녕하세요. 미납 결제 내역이 있어 안내드립니다. 자세한 금액은 학원으로 문의 부탁드립니다.'
+  const paymentMessageType = resolveMessageType(paymentBody, !!imageFile)
+  const paymentPerCost = costByType[paymentMessageType]
+  const paymentTotalCost = paymentRecipientPhones.length * paymentPerCost
+  const paymentInsufficient = paymentTotalCost > currentPoints
+
   return (
     <>
       <TopBar title="메시지 발송" sub="알림톡·전체·반별" />
-      <TabBar tabs={['반별 발송', '전체 발송', '카드결제']} active={tabIdx} onChange={setTabIdx} />
+      <TabBar tabs={['반별 발송', '전체 발송']} active={tabIdx} onChange={setTabIdx} />
 
       <div className="page-content-body">
+        {pointCostError && (
+          <div className="sec">
+            <div style={{ padding: 12, borderRadius: 10, background: 'var(--err2)', color: 'var(--err)', fontSize: 13 }}>
+              {pointCostError}
+            </div>
+          </div>
+        )}
 
         {/* ── 반별 발송 ── */}
         {tabIdx === 0 && (
@@ -297,13 +421,34 @@ export default function MessagePage() {
             </div>
             <SenderRow />
             <div className="sec">
+              <div
+                className="card"
+                style={{ padding: 12, marginBottom: 10, background: 'var(--bg2)', border: '1px solid var(--border)' }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>문자 차감 기준</div>
+                <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
+                  카카오 알림톡 {costByType.KAKAO_ALIMTALK}P · SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
+                </div>
+              </div>
               <label className="input-label" style={{ marginTop: 0 }}>메시지 내용</label>
               <textarea className="input-field" placeholder={'학부모님께 전달할 내용을 입력하세요.\n카카오 알림톡으로 발송됩니다.'} value={msg} onChange={(e) => setMsg(e.target.value)} maxLength={500} />
               <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 3, textAlign: 'right' }}>{msg.length}/500</div>
               <ImageAttach />
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
+                현재 잔액: <b style={{ color: 'var(--navy)' }}>{currentPoints}P</b> ·
+                서비스: <b style={{ color: 'var(--navy)' }}>{messageTypeLabel(classMessageType)}</b> ·
+                {' '}건당 차감: <b style={{ color: 'var(--navy)' }}>{classPerCost}P</b> ·
+                {' '}대상: <b style={{ color: 'var(--navy)' }}>{classRecipientPhones.length}명</b> ·
+                {' '}총 차감: <b style={{ color: 'var(--err)' }}>{classTotalCost}P</b>
+              </div>
+              {classInsufficient && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>
+                  포인트가 부족합니다. 충전 후 발송해 주세요.
+                </div>
+              )}
               <button className="btn-primary"
-                disabled={selectedCount === 0 || msg.trim().length === 0}
-                style={{ opacity: (selectedCount === 0 || msg.trim().length === 0) ? 0.5 : 1 }}
+                disabled={selectedCount === 0 || msg.trim().length === 0 || classInsufficient}
+                style={{ opacity: (selectedCount === 0 || msg.trim().length === 0 || classInsufficient) ? 0.5 : 1 }}
                 onClick={async () => {
                   const targetLabel = selectedClasses.map((c) => c.name).join('·')
                   if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
@@ -315,7 +460,7 @@ export default function MessagePage() {
                     const recipientPhones = uniqueRecipientPhones(
                       parents.filter((p) => selectedParentIds.has(p.pid)).map((p) => p.phone),
                     )
-                    const messageType = resolveMessageType(msg.trim(), !!imageFile)
+                    const messageType = classMessageType
                     const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
                       kind: 'CLASS',
@@ -330,6 +475,7 @@ export default function MessagePage() {
                       attachFiles,
                     })
                     showToast(`${targetLabel} ${recipientPhones.length}명에게 발송 완료`)
+                    setCurrentPoints((p) => Math.max(0, p - classTotalCost))
                     setMsg('')
                     setImagePreview(null)
                     setImageFile(null)
@@ -348,8 +494,18 @@ export default function MessagePage() {
                   <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--slate3)', fontSize: 13 }}>발송 내역이 없습니다</div>
                 ) : (
                   histClass.map((h) => (
-                    <div key={h.id} style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={providerBadge(h.provider)}>{h.provider ?? 'ALIGO'}</Badge><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
+                    <div
+                      key={h.id}
+                      style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}
+                      onClick={() => setSelectedHistory({
+                        title: h.title,
+                        bodyPreview: h.bodyPreview,
+                        targetLabel: h.targetLabel,
+                        recipientCount: h.recipientCount,
+                        createdAt: h.createdAt,
+                      })}
+                    >
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
                       <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
                     </div>
                   ))
@@ -364,18 +520,39 @@ export default function MessagePage() {
           <div>
             <SenderRow />
             <div className="sec">
+              <div
+                className="card"
+                style={{ padding: 12, marginBottom: 10, background: 'var(--bg2)', border: '1px solid var(--border)' }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>문자 차감 기준</div>
+                <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
+                  카카오 알림톡 {costByType.KAKAO_ALIMTALK}P · SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
+                </div>
+              </div>
               <label className="input-label" style={{ marginTop: 0 }}>메시지 내용</label>
               <textarea className="input-field" placeholder="전체 학부모에게 전달할 내용을 입력하세요." value={msg} onChange={(e) => setMsg(e.target.value)} maxLength={500} />
               <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 3, textAlign: 'right' }}>{msg.length}/500</div>
               <ImageAttach />
+              <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
+                현재 잔액: <b style={{ color: 'var(--navy)' }}>{currentPoints}P</b> ·
+                서비스: <b style={{ color: 'var(--navy)' }}>{messageTypeLabel(allMessageType)}</b> ·
+                {' '}건당 차감: <b style={{ color: 'var(--navy)' }}>{allPerCost}P</b> ·
+                {' '}대상: <b style={{ color: 'var(--navy)' }}>{allRecipientPhones.length}명</b> ·
+                {' '}총 차감: <b style={{ color: 'var(--err)' }}>{allTotalCost}P</b>
+              </div>
+              {allInsufficient && (
+                <div style={{ marginTop: 8, fontSize: 12, color: 'var(--err)' }}>
+                  포인트가 부족합니다. 충전 후 발송해 주세요.
+                </div>
+              )}
               <button className="btn-primary"
-                disabled={msg.trim().length === 0}
-                style={{ opacity: msg.trim().length === 0 ? 0.5 : 1 }}
+                disabled={msg.trim().length === 0 || allInsufficient}
+                style={{ opacity: (msg.trim().length === 0 || allInsufficient) ? 0.5 : 1 }}
                 onClick={async () => {
                   if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                   try {
                     const recipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
-                    const messageType = resolveMessageType(msg.trim(), !!imageFile)
+                    const messageType = allMessageType
                     const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
                       kind: 'ALL',
@@ -390,6 +567,7 @@ export default function MessagePage() {
                       attachFiles,
                     })
                     showToast(`전체 ${recipientPhones.length}명에게 발송 완료`)
+                    setCurrentPoints((p) => Math.max(0, p - allTotalCost))
                     setMsg('')
                     setImagePreview(null)
                     setImageFile(null)
@@ -408,8 +586,18 @@ export default function MessagePage() {
                   <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--slate3)', fontSize: 13 }}>발송 내역이 없습니다</div>
                 ) : (
                   histAll.map((h) => (
-                    <div key={h.id} style={{ padding: '12px 16px' }}>
-                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={providerBadge(h.provider)}>{h.provider ?? 'ALIGO'}</Badge><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
+                    <div
+                      key={h.id}
+                      style={{ padding: '12px 16px', cursor: 'pointer' }}
+                      onClick={() => setSelectedHistory({
+                        title: h.title,
+                        bodyPreview: h.bodyPreview,
+                        targetLabel: h.targetLabel,
+                        recipientCount: h.recipientCount,
+                        createdAt: h.createdAt,
+                      })}
+                    >
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
                       <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
                     </div>
                   ))
@@ -424,6 +612,15 @@ export default function MessagePage() {
           <div>
             <SenderRow />
             <div className="sec">
+              <div
+                className="card"
+                style={{ padding: 12, marginBottom: 10, background: 'var(--bg2)', border: '1px solid var(--border)' }}
+              >
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>문자 차감 기준</div>
+                <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
+                  카카오 알림톡 {costByType.KAKAO_ALIMTALK}P · SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
+                </div>
+              </div>
               <div className="row" style={{ marginBottom: 10 }}>
                 <span className="sec-title" style={{ marginBottom: 0 }}>미납 학부모 선택 ({unpaid.length}명)</span>
                 <div style={{ display: 'flex', gap: 6 }}>
@@ -458,7 +655,21 @@ export default function MessagePage() {
                 </div>
               )}
               {checkedUnpaid.size > 0 && (
-                <button className="btn-red" style={{ marginTop: 14 }}
+                <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
+                  현재 잔액: <b style={{ color: 'var(--navy)' }}>{currentPoints}P</b> ·
+                  서비스: <b style={{ color: 'var(--navy)' }}>{messageTypeLabel(paymentMessageType)}</b> ·
+                  {' '}건당 차감: <b style={{ color: 'var(--navy)' }}>{paymentPerCost}P</b> ·
+                  {' '}대상: <b style={{ color: 'var(--navy)' }}>{paymentRecipientPhones.length}명</b> ·
+                  {' '}총 차감: <b style={{ color: 'var(--err)' }}>{paymentTotalCost}P</b>
+                </div>
+              )}
+              {checkedUnpaid.size > 0 && paymentInsufficient && (
+                <div style={{ marginBottom: 8, fontSize: 12, color: 'var(--err)' }}>
+                  포인트가 부족합니다. 충전 후 발송해 주세요.
+                </div>
+              )}
+              {checkedUnpaid.size > 0 && (
+                <button className="btn-red" style={{ marginTop: 14, opacity: paymentInsufficient ? 0.5 : 1 }} disabled={paymentInsufficient}
                   onClick={async () => {
                     const n = checkedUnpaid.size
                     if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
@@ -469,8 +680,7 @@ export default function MessagePage() {
                       const recipientPhones = uniqueRecipientPhones(
                         parents.filter((p) => selectedParentIds.has(p.pid)).map((p) => p.phone),
                       )
-                      const paymentBody = `안녕하세요. 미납 결제 내역이 있어 안내드립니다. 자세한 금액은 학원으로 문의 부탁드립니다.`
-                      const messageType = resolveMessageType(paymentBody, !!imageFile)
+                      const messageType = paymentMessageType
                       const attachFiles = await imageToAttachFiles()
                       await saveMessageSendLog({
                         kind: 'PAYMENT',
@@ -485,6 +695,7 @@ export default function MessagePage() {
                         attachFiles,
                       })
                       showToast(`${recipientPhones.length}명에게 카드결제 문자 발송 완료`)
+                      setCurrentPoints((p) => Math.max(0, p - paymentTotalCost))
                       setCheckedUnpaid(new Set())
                       setImagePreview(null)
                       setImageFile(null)
@@ -504,8 +715,18 @@ export default function MessagePage() {
                   <div style={{ padding: '20px 16px', textAlign: 'center', color: 'var(--slate3)', fontSize: 13 }}>발송 내역이 없습니다</div>
                 ) : (
                   histPay.map((h) => (
-                    <div key={h.id} style={{ padding: '12px 16px' }}>
-                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={providerBadge(h.provider)}>{h.provider ?? 'ALIGO'}</Badge><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
+                    <div
+                      key={h.id}
+                      style={{ padding: '12px 16px', cursor: 'pointer' }}
+                      onClick={() => setSelectedHistory({
+                        title: h.title,
+                        bodyPreview: h.bodyPreview,
+                        targetLabel: h.targetLabel,
+                        recipientCount: h.recipientCount,
+                        createdAt: h.createdAt,
+                      })}
+                    >
+                      <div className="row"><span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{h.title}</span><div style={{ display: 'flex', gap: 6 }}><Badge cls={kindBadge(h.kind)}>{h.targetLabel}</Badge></div></div>
                       <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>{h.recipientCount}명 · {formatLogDate(h.createdAt)}</div>
                     </div>
                   ))
@@ -518,6 +739,7 @@ export default function MessagePage() {
       </div>
 
       {showSenderMgmt && senderMgmtUI}
+      {historyDetailModal}
       <Toast toastRef={toastRef} />
     </>
   )

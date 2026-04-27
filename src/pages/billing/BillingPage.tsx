@@ -20,6 +20,11 @@ interface BillingSummary {
   studentLimit: number
   selectedPlanId?: string | null
   selectedBillingCycle?: string | null
+  smsCostGeneral?: number
+  smsCostKakaoAlimtalk?: number
+  smsCostSms?: number
+  smsCostLms?: number
+  smsCostMms?: number
 }
 
 type SubscribeNotice = {
@@ -63,8 +68,9 @@ export default function BillingPage() {
   const load = useCallback(async () => {
     setErr('')
     try {
-      const res = await client.get('/admin/billing')
-      setData((res.data as { data: BillingSummary }).data)
+      const billingRes = await client.get('/admin/billing')
+      const billingData = (billingRes.data as { data: BillingSummary }).data
+      setData(billingData)
       void useBillingAccessStore.getState().refresh()
     } catch {
       setErr('요금 정보를 불러오지 못했습니다.')
@@ -239,7 +245,6 @@ export default function BillingPage() {
 
   const preview = priceKrwPerMonth(planId, mode)
   const actual = krwWithVat10(mode === 'm' ? preview : preview * 12)
-
   return (
     <>
       <TopBar title="이용요금관리" sub="체험 · 구독 · 하이아카데미 포인트" />
@@ -263,6 +268,20 @@ export default function BillingPage() {
             <div style={{ color: 'var(--slate2)', fontSize: 13 }}>요금제: {PLANS.find((p) => p.id === planId)?.name}</div>
             <div style={{ color: 'var(--slate2)', fontSize: 13, marginTop: 4 }}>학생 수: {data?.studentCount ?? 0}{data?.studentLimit && data.studentLimit > 0 ? ` / ${data.studentLimit}` : ' (무제한)'}</div>
             {data?.subscriptionEndsAt && <div style={{ color: 'var(--slate2)', fontSize: 13, marginTop: 4 }}>이용 만료: {data.subscriptionEndsAt.replace('T', ' ').slice(0, 16)}</div>}
+          </div>
+        </div>
+
+        <div className="sec">
+          <div className="card" style={{ padding: 16 }}>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <div style={{ fontWeight: 700, color: 'var(--navy)' }}>포인트 현황</div>
+              <Link to="/billing/point-deductions" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>
+                포인트 차감 이력 보기 →
+              </Link>
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--slate2)' }}>
+              현재 잔여 포인트: <strong style={{ color: 'var(--navy)' }}>{fmtKrw(data?.smsPoints ?? 0)}P</strong>
+            </div>
           </div>
         </div>
 
@@ -349,6 +368,7 @@ export default function BillingPage() {
             <div style={{ marginTop: 10, display: 'flex', gap: 12 }}>
               <Link to="/billing/charge" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>포인트 충전하기 →</Link>
               <Link to="/billing/payments" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>결제 이력 보기 →</Link>
+              <Link to="/billing/point-deductions" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>포인트 차감 이력 보기 →</Link>
             </div>
           </div>
         </div>
