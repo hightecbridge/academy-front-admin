@@ -3,8 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { TopBar, Toast, useToast } from '../../components/common'
 import client from '../../api/client'
-import { PLANS, fmtKrw, krwWithVat10, priceKrwPerMonth, type BillingMode, type PlanId } from '../../config/pricingPlans'
+import { PLANS, fmtKrw, priceKrwPerMonth, type PlanId } from '../../config/pricingPlans'
 import { useBillingAccessStore } from '../../store/billingAccessStore'
+import { useAuthStore } from '../../store/authStore'
 
 interface BillingSummary {
   trialEndsAt: string | null
@@ -36,7 +37,7 @@ type SubscribeNotice = {
 }
 
 function isPlanId(v: string | null | undefined): v is PlanId {
-  return v === 'standard' || v === 'premium' || v === 'enterprise'
+  return v === 'basic' || v === 'standard' || v === 'premium' || v === 'enterprise'
 }
 
 export default function BillingPage() {
@@ -48,11 +49,11 @@ export default function BillingPage() {
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
-  const [mode, setMode] = useState<BillingMode>('m')
-  const [planId, setPlanId] = useState<PlanId>('standard')
+  const [planId, setPlanId] = useState<PlanId>('basic')
   const processingRef = useRef(false)
   const customerKeyRef = useRef<string>(`academy-admin-subscription-${Date.now()}`)
   const tossClientKey = import.meta.env.VITE_TOSS_PAYMENTS_CLIENT_KEY as string | undefined
+  const user = useAuthStore((s) => s.user)
   const widgetsRef = useRef<any>(null)
   const [widgetOpen, setWidgetOpen] = useState(false)
   const [widgetReady, setWidgetReady] = useState(false)
@@ -87,34 +88,44 @@ export default function BillingPage() {
     if (!data) return
     const sid = data.billingPlanId ?? data.selectedPlanId
     if (isPlanId(sid)) setPlanId(sid)
-    const bc = data.selectedBillingCycle
-    if (bc === 'YEARLY') setMode('y')
-    else if (bc === 'MONTHLY') setMode('m')
   }, [data])
 
-  const finalizeSubscribe = async (selectedPlanId: PlanId, selectedMode: BillingMode, paidAmountKrw?: number, orderId?: string) => {
+  const finalizeSubscribe = async (
+    selectedPlanId: PlanId,
+    paidAmountKrw?: number,
+    orderId?: string,
+    authKey?: string,
+    customerKey?: string,
+  ) => {
     setBusy(true)
     setErr('')
     try {
-      const res = await client.post('/admin/billing/subscribe', {
-        planId: selectedPlanId,
-        billingCycle: selectedMode === 'm' ? 'MONTHLY' : 'YEARLY',
-        paidAmountKrw,
-        orderId,
-      })
+      const res = authKey && customerKey
+        ? await client.post('/admin/billing/subscribe/auto-register', {
+            planId: selectedPlanId,
+            authKey,
+            customerKey,
+            paidAmountKrw,
+            orderId,
+          })
+        : await client.post('/admin/billing/subscribe', {
+            planId: selectedPlanId,
+            billingCycle: 'MONTHLY',
+            paidAmountKrw,
+            orderId,
+          })
       const summary = (res.data as { data: BillingSummary }).data
       setData(summary)
       void useBillingAccessStore.getState().refresh()
       setPlanId(selectedPlanId)
-      setMode(selectedMode)
       setNotice({
         planName: PLANS.find((p) => p.id === selectedPlanId)?.name ?? '요금제',
-        cycle: selectedMode === 'm' ? '월간' : '연간',
+        cycle: '월 정기결제',
         amountKrw: paidAmountKrw,
         subscriptionEndsAt: summary.subscriptionEndsAt,
         orderId,
       })
-      showToast('구독 결제가 완료되었습니다.')
+      showToast(authKey && customerKey ? '정기결제가 등록되었습니다.' : '구독 결제가 완료되었습니다.')
       navigate('/billing', { replace: true })
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string } } }
@@ -127,9 +138,7 @@ export default function BillingPage() {
   const subscribe = async () => {
     const plan = PLANS.find((p) => p.id === planId)
     const label = plan?.name ?? planId
-    const supply = mode === 'm' ? priceKrwPerMonth(planId, mode) : priceKrwPerMonth(planId, mode) * 12
-    const amount = krwWithVat10(supply)
-    if (!window.confirm(`${label} ${mode === 'm' ? '월간' : '연간'} 결제로 진행합니다.\n실 결제 금액 ${fmtKrw(amount)}원 (부가세 포함)`)) return
+    const amount = priceKrwPerMonth(planId)
 
     if (!tossClientKey) {
       const msg = '토스 결제 키가 설정되지 않았습니다.'
@@ -142,12 +151,13 @@ export default function BillingPage() {
     setErr('')
     try {
       const orderId = `SUB-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-      const billingCycle = mode === 'm' ? 'MONTHLY' : 'YEARLY'
-      const orderName = `하이아카데미 ${label} ${mode === 'm' ? '월간' : '연간'} 구독`
+      const billingCycle = 'MONTHLY'
+      const orderName = `하이아카데미 ${label} 정기결제`
       const successUrl = `${window.location.origin}/billing?toss=success&planId=${planId}&billingCycle=${billingCycle}&amount=${amount}&orderId=${encodeURIComponent(orderId)}`
       const failUrl = `${window.location.origin}/billing?toss=fail`
 
       if (tossClientKey.includes('_gck_')) {
+        // 테스트 키 환경에서는 위젯 기반 결제로 실제 위젯이 뜨도록 처리
         setWidgetPayload({ amount, orderId, orderName, successUrl, failUrl })
         setWidgetRenderKey((v) => v + 1)
         setWidgetReady(false)
@@ -157,13 +167,11 @@ export default function BillingPage() {
 
       const tossPayments = await loadTossPayments(tossClientKey)
       const payment = tossPayments.payment({ customerKey: customerKeyRef.current })
-      await payment.requestPayment({
+      await payment.requestBillingAuth({
         method: 'CARD',
-        amount: { currency: 'KRW', value: amount },
-        orderId,
-        orderName,
         successUrl,
         failUrl,
+        customerEmail: user?.email ?? undefined,
         customerName: '학원 관리자',
         windowTarget: 'self',
       })
@@ -223,15 +231,15 @@ export default function BillingPage() {
     }
     if (toss !== 'success') return
     const selectedPlan = searchParams.get('planId')
-    const cycle = searchParams.get('billingCycle')
-    const amountRaw = searchParams.get('amount')
     const orderId = searchParams.get('orderId') || undefined
+    const amountRaw = searchParams.get('amount')
+    const authKey = searchParams.get('authKey') || undefined
+    const customerKey = searchParams.get('customerKey') || undefined
     const paid = amountRaw ? Number(amountRaw) : NaN
     const paidAmountKrw = Number.isFinite(paid) && paid > 0 ? paid : undefined
     const nextPlan: PlanId = isPlanId(selectedPlan) ? selectedPlan : planId
-    const nextMode: BillingMode = cycle === 'YEARLY' ? 'y' : 'm'
     processingRef.current = true
-    void finalizeSubscribe(nextPlan, nextMode, paidAmountKrw, orderId)
+    void finalizeSubscribe(nextPlan, paidAmountKrw, orderId, authKey, customerKey)
   }, [searchParams, planId])
 
   if (loading) {
@@ -243,8 +251,7 @@ export default function BillingPage() {
     )
   }
 
-  const preview = priceKrwPerMonth(planId, mode)
-  const actual = krwWithVat10(mode === 'm' ? preview : preview * 12)
+  const actual = priceKrwPerMonth(planId)
   return (
     <>
       <TopBar title="이용요금관리" sub="체험 · 구독 · 하이아카데미 포인트" />
@@ -275,8 +282,12 @@ export default function BillingPage() {
           <div className="card" style={{ padding: 16 }}>
             <div className="row" style={{ marginBottom: 10 }}>
               <div style={{ fontWeight: 700, color: 'var(--navy)' }}>포인트 현황</div>
-              <Link to="/billing/point-deductions" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>
-                포인트 차감 이력 보기 →
+              <Link
+                to="/billing/charge"
+                className="btn-primary"
+                style={{ width: 'auto', marginTop: 0, padding: '8px 12px', fontSize: 12, textDecoration: 'none' }}
+              >
+                포인트 충전하기
               </Link>
             </div>
             <div style={{ fontSize: 14, color: 'var(--slate2)' }}>
@@ -296,14 +307,13 @@ export default function BillingPage() {
             }}
           >
             <div style={{ fontWeight: 700, marginBottom: 6, color: 'rgba(255,255,255,.7)', fontSize: 12 }}>요금제 선택</div>
-            <div style={{ display: 'inline-flex', gap: 8, background: 'rgba(255,255,255,.08)', borderRadius: 999, padding: 5, border: '1px solid rgba(255,255,255,.15)' }}>
-              <button type="button" onClick={() => setMode('m')} style={{ padding: '7px 16px', borderRadius: 999, border: 'none', background: mode === 'm' ? '#fff' : 'transparent' }}>월간</button>
-              <button type="button" onClick={() => setMode('y')} style={{ padding: '7px 16px', borderRadius: 999, border: 'none', background: mode === 'y' ? '#fff' : 'transparent' }}>연간</button>
-            </div>
-            <div className="billing-pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 14 }}>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,.75)', marginBottom: 2 }}>정기결제 · VAT 포함</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,.7)', marginBottom: 2 }}>토스페이먼츠 카드 등록 위젯(테스트 버전)으로 카드 등록 후 결제됩니다.</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,.7)', marginBottom: 2 }}>등록된 카드로 매월 자동으로 결제됩니다.</div>
+            <div className="billing-pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 14 }}>
               {PLANS.map((plan) => {
                 const selected = plan.id === planId
-                const price = mode === 'm' ? plan.priceM : plan.priceY
+                const price = plan.priceM
                 return (
                   <button
                     key={plan.id}
@@ -343,7 +353,7 @@ export default function BillingPage() {
                       {fmtKrw(price)}
                       <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,.72)' }}>원</span>
                     </div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', marginBottom: 10 }}>/ 월 · 부가세 별도</div>
+                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,.6)', marginBottom: 10 }}>/ 월 · VAT 포함</div>
                     <div style={{ fontSize: 12, color: 'rgba(255,255,255,.78)', lineHeight: 1.5 }}>{plan.desc}</div>
                   </button>
                 )
@@ -360,15 +370,24 @@ export default function BillingPage() {
                 color: 'rgba(255,255,255,.9)',
               }}
             >
-              실 결제 금액(부가세 포함): <strong style={{ color: '#C4B5FD' }}>{fmtKrw(actual)}원</strong>
+              정기결제 금액(VAT 포함): <strong style={{ color: '#C4B5FD' }}>{fmtKrw(actual)}원</strong>
             </div>
             <button type="button" className="btn-primary" style={{ width: '100%', marginTop: 14 }} disabled={busy} onClick={() => void subscribe()}>
-              {busy ? '처리 중…' : '구독 결제하기'}
+              {busy ? '처리 중…' : '정기결제 등록'}
             </button>
-            <div style={{ marginTop: 10, display: 'flex', gap: 12 }}>
-              <Link to="/billing/charge" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>포인트 충전하기 →</Link>
-              <Link to="/billing/payments" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>결제 이력 보기 →</Link>
-              <Link to="/billing/point-deductions" style={{ fontSize: 12, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>포인트 차감 이력 보기 →</Link>
+          </div>
+        </div>
+
+        <div className="sec">
+          <div className="card" style={{ padding: 16 }}>
+            <div style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 10 }}>이력 조회</div>
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+              <Link to="/billing/payments" style={{ fontSize: 13, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>
+                결제 이력 보기 →
+              </Link>
+              <Link to="/billing/point-deductions" style={{ fontSize: 13, fontWeight: 700, color: 'var(--acc)', textDecoration: 'none' }}>
+                포인트 차감 이력 보기 →
+              </Link>
             </div>
           </div>
         </div>
@@ -377,13 +396,13 @@ export default function BillingPage() {
       {widgetOpen && widgetPayload && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
           <div className="card" style={{ width: 'min(680px, 92vw)', maxHeight: '85vh', overflow: 'auto', padding: 16 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)', marginBottom: 10 }}>토스 테스트 결제 위젯</div>
+            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)', marginBottom: 10 }}>토스페이먼츠 카드 등록 위젯 (테스트 버전)</div>
             <div id={`billing-widget-methods-${widgetRenderKey}`} />
             <div id={`billing-widget-agreement-${widgetRenderKey}`} style={{ marginTop: 12 }} />
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
               <button type="button" className="btn-secondary" onClick={() => setWidgetOpen(false)} disabled={busy}>닫기</button>
               <button type="button" className="btn-primary" onClick={() => void requestWidgetPayment()} disabled={!widgetReady || busy}>
-                {busy ? '처리 중…' : '위젯으로 결제하기'}
+                {busy ? '처리 중…' : '위젯 실행하기'}
               </button>
             </div>
           </div>

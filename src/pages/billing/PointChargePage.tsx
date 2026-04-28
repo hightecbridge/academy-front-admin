@@ -1,4 +1,4 @@
-// 포인트 충전 — 토스페이먼츠 테스트 결제 연동 (10,000 / 20,000 / 30,000원 선택)
+// 포인트 충전 — 토스페이먼츠 일반 결제 연동 (5,000 / 10,000 / 20,000 / 30,000원 선택)
 import { loadTossPayments } from '@tosspayments/tosspayments-sdk'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -11,8 +11,8 @@ interface BillingSummary {
   smsPoints: number
 }
 
-/** 결제 금액(원) = 적립 포인트(P) 1:1 */
-const CHARGE_AMOUNTS_KRW = [10_000, 20_000, 30_000] as const
+/** 결제 금액(원, VAT 포함) = 적립 포인트(P) 1:1 */
+const CHARGE_AMOUNTS_KRW = [5_000, 10_000, 20_000, 30_000] as const
 
 export default function PointChargePage() {
   const navigate = useNavigate()
@@ -195,7 +195,7 @@ export default function PointChargePage() {
 
   return (
     <>
-      <TopBar title="포인트 충전하기" sub="하이아카데미 포인트 적립" />
+      <TopBar title="포인트 충전하기" sub="일반 결제 · VAT 포함" />
       <div className="page-content-body">
         {err && (
           <div className="sec">
@@ -211,7 +211,7 @@ export default function PointChargePage() {
             <p style={{ fontSize: 24, fontWeight: 800, color: 'var(--acc)', marginBottom: 4 }}>
               {smsPoints} <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--slate2)' }}>P</span>
             </p>
-            <p style={{ fontSize: 12, color: 'var(--slate2)' }}>충전 금액을 선택한 뒤 결제합니다. (결제 원화와 동일 수치가 포인트로 적립됩니다.)</p>
+            <p style={{ fontSize: 12, color: 'var(--slate2)' }}>충전 금액(VAT 포함)을 선택한 뒤 일반 결제로 진행합니다. (결제 원화와 동일 수치가 포인트로 적립됩니다.)</p>
           </div>
         </div>
 
@@ -221,7 +221,7 @@ export default function PointChargePage() {
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: 'repeat(3, 1fr)',
+                gridTemplateColumns: 'repeat(4, 1fr)',
                 gap: 10,
                 marginBottom: 16,
               }}
@@ -245,14 +245,14 @@ export default function PointChargePage() {
                     }}
                   >
                     <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--navy)' }}>{fmtKrw(krw)}원</div>
-                    <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 4 }}>{fmtKrw(krw)}P 적립</div>
+                    <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 4 }}>{fmtKrw(krw)}P 적립 · VAT 포함</div>
                   </button>
                 )
               })}
             </div>
 
             <button type="button" className="btn-primary" style={{ width: '100%', padding: '14px 16px', fontSize: 15, fontWeight: 700 }} disabled={busy} onClick={() => void submit()}>
-              {busy ? '처리 중…' : `${fmtKrw(selectedKrw)}원 결제하기`}
+              {busy ? '처리 중…' : `${fmtKrw(selectedKrw)}원 일반결제하기`}
             </button>
             <p style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 10 }}>
               결제 완료 후 이 페이지로 돌아오면 선택한 금액만큼 포인트가 적립됩니다. (테스트 모드)
