@@ -69,6 +69,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const billingLocked = useBillingAccessStore((s) => s.paymentRequired)
   const { fetchClasses, fetchParents, fetchNotices, fetchEvents } = useDataStore()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+
   const goNav = (path: string) => {
     if (billingLocked && !path.startsWith('/billing')) return
     navigate(path)

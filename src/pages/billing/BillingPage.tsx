@@ -1,6 +1,5 @@
-﻿import { loadTossPayments } from '@tosspayments/tosspayments-sdk'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+﻿import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { TopBar, Toast, useToast } from '../../components/common'
 import client from '../../api/client'
 import { PLANS, fmtKrw, priceKrwPerMonth, type PlanId } from '../../config/pricingPlans'
@@ -26,6 +25,8 @@ interface BillingSummary {
   smsCostSms?: number
   smsCostLms?: number
   smsCostMms?: number
+  autoBillingEnabled?: boolean
+  billingKeyIssuedAt?: string | null
 }
 
 type SubscribeNotice = {
@@ -36,35 +37,97 @@ type SubscribeNotice = {
   orderId?: string
 }
 
+type ResultPopup = {
+  type: 'success' | 'error'
+  message: string
+}
+
+type CardForm = {
+  cardNumber: string
+  cardExpirationYear: string
+  cardExpirationMonth: string
+  customerIdentityNumber: string
+  cardPassword: string
+}
+
 function isPlanId(v: string | null | undefined): v is PlanId {
   return v === 'basic' || v === 'standard' || v === 'premium' || v === 'enterprise'
 }
 
 export default function BillingPage() {
-  const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const { ref: toastRef, show: showToast } = useToast()
   const [notice, setNotice] = useState<SubscribeNotice | null>(null)
   const [data, setData] = useState<BillingSummary | null>(null)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [resultPopup, setResultPopup] = useState<ResultPopup | null>(null)
+  const [showCardModal, setShowCardModal] = useState(false)
   const [planId, setPlanId] = useState<PlanId>('basic')
-  const processingRef = useRef(false)
-  const customerKeyRef = useRef<string>(`academy-admin-subscription-${Date.now()}`)
-  const tossClientKey = import.meta.env.VITE_TOSS_PAYMENTS_CLIENT_KEY as string | undefined
+  const [card, setCard] = useState<CardForm>({
+    cardNumber: '',
+    cardExpirationYear: '',
+    cardExpirationMonth: '',
+    customerIdentityNumber: '',
+    cardPassword: '',
+  })
+  const cardNumberRefs = useRef<Array<HTMLInputElement | null>>([])
   const user = useAuthStore((s) => s.user)
-  const widgetsRef = useRef<any>(null)
-  const [widgetOpen, setWidgetOpen] = useState(false)
-  const [widgetReady, setWidgetReady] = useState(false)
-  const [widgetRenderKey, setWidgetRenderKey] = useState(0)
-  const [widgetPayload, setWidgetPayload] = useState<{
-    amount: number
-    orderId: string
-    orderName: string
-    successUrl: string
-    failUrl: string
-  } | null>(null)
+
+  const digitsOnly = (value: string, max: number) => value.replace(/\D/g, '').slice(0, max)
+  const cardNumberChunks = (() => {
+    const raw = digitsOnly(card.cardNumber, 16)
+    const chunks = raw.match(/.{1,4}/g) ?? []
+    return Array.from({ length: 4 }, (_, i) => chunks[i] ?? '')
+  })()
+  const updateCardNumberChunk = (index: number, inputValue: string) => {
+    const clean = digitsOnly(inputValue, 4)
+    const next = [...cardNumberChunks]
+    next[index] = clean
+    setCard((prev) => ({ ...prev, cardNumber: next.join('') }))
+    if (clean.length === 4 && index < 3) {
+      cardNumberRefs.current[index + 1]?.focus()
+    }
+  }
+  const cardFormCompleted = () => {
+    const cardNumber = card.cardNumber.replace(/\s+/g, '')
+    return (
+      /^\d{12,16}$/.test(cardNumber)
+      && /^\d{2,4}$/.test(card.cardExpirationYear.trim())
+      && /^\d{2}$/.test(card.cardExpirationMonth.trim())
+      && /^\d{6}(\d{4})?$/.test(card.customerIdentityNumber.trim())
+      && /^\d{2}$/.test(card.cardPassword.trim())
+    )
+  }
+  const validateCardForm = (): string | null => {
+    const cardNumber = card.cardNumber.replace(/\s+/g, '')
+    if (!/^\d{12,16}$/.test(cardNumber)) {
+      return '카드 번호를 숫자만 12~16자리로 입력해 주세요.'
+    }
+    if (!/^\d{2,4}$/.test(card.cardExpirationYear.trim())) {
+      return '카드 유효 연도를 2~4자리로 입력해 주세요.'
+    }
+    if (!/^\d{2}$/.test(card.cardExpirationMonth.trim())) {
+      return '카드 유효 월을 2자리(MM)로 입력해 주세요.'
+    }
+    if (!/^\d{6}(\d{4})?$/.test(card.customerIdentityNumber.trim())) {
+      return '생년월일 6자리 또는 사업자번호 10자리를 입력해 주세요.'
+    }
+    if (!/^\d{2}$/.test(card.cardPassword.trim())) {
+      return '카드 비밀번호 앞 2자리를 입력해 주세요.'
+    }
+    return null
+  }
+  const completeCardInput = () => {
+    const errorMsg = validateCardForm()
+    if (errorMsg) {
+      setErr(errorMsg)
+      showToast(errorMsg)
+      return
+    }
+    showToast('카드 정보가 저장되었습니다.')
+    setShowCardModal(false)
+  }
 
   const load = useCallback(async () => {
     setErr('')
@@ -90,23 +153,38 @@ export default function BillingPage() {
     if (isPlanId(sid)) setPlanId(sid)
   }, [data])
 
+  const registeredPlanId: PlanId = isPlanId(data?.billingPlanId)
+    ? data.billingPlanId
+    : isPlanId(data?.selectedPlanId)
+      ? data.selectedPlanId
+      : planId
+  const registeredPlanName = PLANS.find((p) => p.id === registeredPlanId)?.name ?? '요금제'
+  const registeredMonthlyKrw = priceKrwPerMonth(registeredPlanId)
+  const formatBillingDate = (iso: string | null | undefined) =>
+    iso ? iso.replace('T', ' ').slice(0, 16) : ''
+
   const finalizeSubscribe = async (
     selectedPlanId: PlanId,
     paidAmountKrw?: number,
     orderId?: string,
-    authKey?: string,
     customerKey?: string,
   ) => {
     setBusy(true)
     setErr('')
     try {
-      const res = authKey && customerKey
+      const res = customerKey
         ? await client.post('/admin/billing/subscribe/auto-register', {
             planId: selectedPlanId,
-            authKey,
             customerKey,
             paidAmountKrw,
             orderId,
+            cardNumber: card.cardNumber.replace(/\s+/g, ''),
+            cardExpirationYear: card.cardExpirationYear.trim(),
+            cardExpirationMonth: card.cardExpirationMonth.trim(),
+            customerIdentityNumber: card.customerIdentityNumber.trim(),
+            cardPassword: card.cardPassword.trim(),
+            customerName: user?.name || '학원 관리자',
+            customerEmail: user?.email ?? undefined,
           })
         : await client.post('/admin/billing/subscribe', {
             planId: selectedPlanId,
@@ -125,122 +203,66 @@ export default function BillingPage() {
         subscriptionEndsAt: summary.subscriptionEndsAt,
         orderId,
       })
-      showToast(authKey && customerKey ? '정기결제가 등록되었습니다.' : '구독 결제가 완료되었습니다.')
-      navigate('/billing', { replace: true })
+      const successMsg = customerKey ? '정기결제가 등록되었습니다.' : '구독 결제가 완료되었습니다.'
+      showToast(successMsg)
+      setResultPopup({ type: 'success', message: successMsg })
     } catch (e: unknown) {
       const ax = e as { response?: { data?: { message?: string } } }
-      setErr(ax.response?.data?.message ?? '구독 결제 반영에 실패했습니다.')
+      const msg = ax.response?.data?.message ?? '구독 결제 반영에 실패했습니다.'
+      setErr(msg)
+      showToast(msg)
+      setResultPopup({ type: 'error', message: msg })
     } finally {
       setBusy(false)
     }
   }
 
   const subscribe = async () => {
-    const plan = PLANS.find((p) => p.id === planId)
-    const label = plan?.name ?? planId
     const amount = priceKrwPerMonth(planId)
-
-    if (!tossClientKey) {
-      const msg = '토스 결제 키가 설정되지 않았습니다.'
+    const validationError = validateCardForm()
+    const hasAnyCardInput = Boolean(
+      card.cardNumber.trim()
+      || card.cardExpirationYear.trim()
+      || card.cardExpirationMonth.trim()
+      || card.customerIdentityNumber.trim()
+      || card.cardPassword.trim(),
+    )
+    if (validationError && !hasAnyCardInput) {
+      const msg = '카드 정보를 먼저 입력해 주세요. "카드 정보 입력하기" 버튼에서 입력할 수 있습니다.'
       setErr(msg)
-      window.alert(msg)
+      showToast(msg)
+      setShowCardModal(true)
+      return
+    }
+    if (validationError) {
+      setErr(validationError)
+      showToast(validationError)
+      setShowCardModal(true)
       return
     }
 
-    setBusy(true)
-    setErr('')
-    try {
-      const orderId = `SUB-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-      const billingCycle = 'MONTHLY'
-      const orderName = `하이아카데미 ${label} 정기결제`
-      const successUrl = `${window.location.origin}/billing?toss=success&planId=${planId}&billingCycle=${billingCycle}&amount=${amount}&orderId=${encodeURIComponent(orderId)}`
-      const failUrl = `${window.location.origin}/billing?toss=fail`
+    const customerSeed = (user?.email ?? 'admin').replace(/[^a-zA-Z0-9@._=-]/g, '')
+    const customerKey = `academy-${customerSeed}-${Date.now()}`
+    const orderId = `SUB-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+    void finalizeSubscribe(planId, amount, orderId, customerKey)
+  }
 
-      if (tossClientKey.includes('_gck_')) {
-        // 테스트 키 환경에서는 위젯 기반 결제로 실제 위젯이 뜨도록 처리
-        setWidgetPayload({ amount, orderId, orderName, successUrl, failUrl })
-        setWidgetRenderKey((v) => v + 1)
-        setWidgetReady(false)
-        setWidgetOpen(true)
+  useEffect(() => {
+    if (!showCardModal) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setShowCardModal(false)
         return
       }
-
-      const tossPayments = await loadTossPayments(tossClientKey)
-      const payment = tossPayments.payment({ customerKey: customerKeyRef.current })
-      await payment.requestBillingAuth({
-        method: 'CARD',
-        successUrl,
-        failUrl,
-        customerEmail: user?.email ?? undefined,
-        customerName: '학원 관리자',
-        windowTarget: 'self',
-      })
-    } catch (e: unknown) {
-      const ex = e as { message?: string }
-      setErr(ex.message ?? '결제창 실행 중 오류가 발생했습니다.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    if (!widgetOpen || !widgetPayload || !tossClientKey?.includes('_gck_')) return
-    let cancelled = false
-    void (async () => {
-      try {
-        const tossPayments = await loadTossPayments(tossClientKey)
-        const widgets = tossPayments.widgets({ customerKey: customerKeyRef.current })
-        widgetsRef.current = widgets
-        await widgets.setAmount({ currency: 'KRW', value: widgetPayload.amount })
-        await widgets.renderPaymentMethods({ selector: `#billing-widget-methods-${widgetRenderKey}` })
-        await widgets.renderAgreement({ selector: `#billing-widget-agreement-${widgetRenderKey}` })
-        if (!cancelled) setWidgetReady(true)
-      } catch (e: unknown) {
-        const ex = e as { message?: string }
-        setErr(ex.message ?? '결제 위젯을 불러오지 못했습니다.')
-        setWidgetOpen(false)
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        completeCardInput()
       }
-    })()
-    return () => {
-      cancelled = true
     }
-  }, [widgetOpen, widgetPayload, widgetRenderKey, tossClientKey])
-
-  const requestWidgetPayment = async () => {
-    if (!widgetPayload || !widgetsRef.current) return
-    try {
-      setBusy(true)
-      await widgetsRef.current.requestPayment({
-        orderId: widgetPayload.orderId,
-        orderName: widgetPayload.orderName,
-        successUrl: widgetPayload.successUrl,
-        failUrl: widgetPayload.failUrl,
-        customerName: '학원 관리자',
-      })
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  useEffect(() => {
-    const toss = searchParams.get('toss')
-    if (!toss || processingRef.current) return
-    if (toss === 'fail') {
-      setErr(searchParams.get('message') || '결제가 취소되었거나 실패했습니다.')
-      return
-    }
-    if (toss !== 'success') return
-    const selectedPlan = searchParams.get('planId')
-    const orderId = searchParams.get('orderId') || undefined
-    const amountRaw = searchParams.get('amount')
-    const authKey = searchParams.get('authKey') || undefined
-    const customerKey = searchParams.get('customerKey') || undefined
-    const paid = amountRaw ? Number(amountRaw) : NaN
-    const paidAmountKrw = Number.isFinite(paid) && paid > 0 ? paid : undefined
-    const nextPlan: PlanId = isPlanId(selectedPlan) ? selectedPlan : planId
-    processingRef.current = true
-    void finalizeSubscribe(nextPlan, paidAmountKrw, orderId, authKey, customerKey)
-  }, [searchParams, planId])
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [showCardModal, card, showToast])
 
   if (loading) {
     return (
@@ -275,6 +297,29 @@ export default function BillingPage() {
             <div style={{ color: 'var(--slate2)', fontSize: 13 }}>요금제: {PLANS.find((p) => p.id === planId)?.name}</div>
             <div style={{ color: 'var(--slate2)', fontSize: 13, marginTop: 4 }}>학생 수: {data?.studentCount ?? 0}{data?.studentLimit && data.studentLimit > 0 ? ` / ${data.studentLimit}` : ' (무제한)'}</div>
             {data?.subscriptionEndsAt && <div style={{ color: 'var(--slate2)', fontSize: 13, marginTop: 4 }}>이용 만료: {data.subscriptionEndsAt.replace('T', ' ').slice(0, 16)}</div>}
+            {data?.autoBillingEnabled && (
+              <div
+                style={{
+                  marginTop: 12,
+                  padding: 12,
+                  borderRadius: 10,
+                  background: 'var(--bg2)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--navy)', marginBottom: 8 }}>정기결제 등록 내용</div>
+                <div style={{ color: 'var(--slate2)', fontSize: 13, lineHeight: 1.65 }}>
+                  <div>요금제: <strong style={{ color: 'var(--navy)' }}>{registeredPlanName}</strong></div>
+                  <div>결제 주기: <strong style={{ color: 'var(--navy)' }}>월 정기결제</strong> · VAT 포함</div>
+                  <div>
+                    월 정기결제 금액: <strong style={{ color: 'var(--navy)' }}>{fmtKrw(registeredMonthlyKrw)}원</strong>
+                  </div>
+                  {data.billingKeyIssuedAt && (
+                    <div>카드·빌링 등록일: <strong style={{ color: 'var(--navy)' }}>{formatBillingDate(data.billingKeyIssuedAt)}</strong></div>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -308,7 +353,7 @@ export default function BillingPage() {
           >
             <div style={{ fontWeight: 700, marginBottom: 6, color: 'rgba(255,255,255,.7)', fontSize: 12 }}>요금제 선택</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,.75)', marginBottom: 2 }}>정기결제 · VAT 포함</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,.7)', marginBottom: 2 }}>토스페이먼츠 카드 등록 위젯(테스트 버전)으로 카드 등록 후 결제됩니다.</div>
+            <div style={{ fontSize: 12, color: 'rgba(255,255,255,.7)', marginBottom: 2 }}>토스페이먼츠 빌링 API로 카드정보를 등록하고 즉시 1회 결제됩니다.</div>
             <div style={{ fontSize: 12, color: 'rgba(255,255,255,.7)', marginBottom: 2 }}>등록된 카드로 매월 자동으로 결제됩니다.</div>
             <div className="billing-pricing-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 14 }}>
               {PLANS.map((plan) => {
@@ -372,6 +417,55 @@ export default function BillingPage() {
             >
               정기결제 금액(VAT 포함): <strong style={{ color: '#C4B5FD' }}>{fmtKrw(actual)}원</strong>
             </div>
+            <button
+              type="button"
+              onClick={() => setShowCardModal(true)}
+              style={{
+                width: '100%',
+                marginTop: 12,
+                borderRadius: 12,
+                border: '1px solid rgba(196,181,253,.35)',
+                background: 'rgba(196,181,253,.14)',
+                color: '#E9D5FF',
+                padding: '11px 12px',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              카드 정보 입력하기
+            </button>
+            <div style={{ marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+              {cardFormCompleted() ? (
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: '4px 8px',
+                    borderRadius: 999,
+                    background: 'rgba(16,185,129,.2)',
+                    color: '#6EE7B7',
+                    border: '1px solid rgba(110,231,183,.4)',
+                  }}
+                >
+                  카드정보 입력됨
+                </span>
+              ) : (
+                <span
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 700,
+                    padding: '4px 8px',
+                    borderRadius: 999,
+                    background: 'rgba(248,113,113,.16)',
+                    color: '#FCA5A5',
+                    border: '1px solid rgba(252,165,165,.4)',
+                  }}
+                >
+                  카드정보 미입력
+                </span>
+              )}
+            </div>
             <button type="button" className="btn-primary" style={{ width: '100%', marginTop: 14 }} disabled={busy} onClick={() => void subscribe()}>
               {busy ? '처리 중…' : '정기결제 등록'}
             </button>
@@ -393,23 +487,275 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {widgetOpen && widgetPayload && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(15, 23, 42, 0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-          <div className="card" style={{ width: 'min(680px, 92vw)', maxHeight: '85vh', overflow: 'auto', padding: 16 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)', marginBottom: 10 }}>토스페이먼츠 카드 등록 위젯 (테스트 버전)</div>
-            <div id={`billing-widget-methods-${widgetRenderKey}`} />
-            <div id={`billing-widget-agreement-${widgetRenderKey}`} style={{ marginTop: 12 }} />
-            <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-              <button type="button" className="btn-secondary" onClick={() => setWidgetOpen(false)} disabled={busy}>닫기</button>
-              <button type="button" className="btn-primary" onClick={() => void requestWidgetPayment()} disabled={!widgetReady || busy}>
-                {busy ? '처리 중…' : '위젯 실행하기'}
+      {showCardModal && (
+        <div
+          role="presentation"
+          onClick={() => setShowCardModal(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(15, 23, 42, .46)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 1100,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 12,
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="billing-card-modal"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 'min(560px, 96vw)',
+              maxHeight: 'calc(100dvh - 16px)',
+              borderRadius: 24,
+              border: '1px solid #E5EAF3',
+              background: '#FFFFFF',
+              boxShadow: '0 24px 70px rgba(15,23,42,.20)',
+              color: '#1F2A37',
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
+            <div className="billing-card-modal-head" style={{ padding: '20px 22px 12px', borderBottom: '1px solid #EEF2F7' }}>
+              <div style={{ fontSize: 18, fontWeight: 800, color: '#111827' }}>카드 결제 정보</div>
+              <div style={{ marginTop: 6, fontSize: 13, color: '#6B7280' }}>
+                안전한 결제를 위해 카드 정보를 입력해 주세요.
+              </div>
+              <div style={{ marginTop: 8, fontSize: 11, color: '#9CA3AF' }}>
+                ESC: 닫기 · Enter: 입력 완료
+              </div>
+            </div>
+            <div className="billing-card-modal-body" style={{ padding: 22, display: 'grid', gap: 14 }}>
+              <div
+                className="billing-amount-box"
+                style={{
+                  borderRadius: 14,
+                  border: '1px solid #DBEAFE',
+                  background: 'linear-gradient(135deg, #EFF6FF, #F8FAFF)',
+                  padding: '12px 14px',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                }}
+              >
+                <div style={{ fontSize: 12, color: '#64748B' }}>결제 예정 금액</div>
+                <div style={{ fontSize: 16, fontWeight: 800, color: '#2563EB' }}>{fmtKrw(actual)}원</div>
+              </div>
+
+              <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>카드 번호</div>
+              <div
+                className="card-number-grid"
+                style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}
+              >
+                {cardNumberChunks.map((chunk, idx) => (
+                  <span key={`card-number-wrap-${idx}`} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                    <input
+                      key={`card-number-${idx}`}
+                      ref={(el) => { cardNumberRefs.current[idx] = el }}
+                      value={chunk}
+                      onChange={(e) => updateCardNumberChunk(idx, e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Backspace' && !chunk && idx > 0) {
+                          cardNumberRefs.current[idx - 1]?.focus()
+                        }
+                      }}
+                      className="input"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="0000"
+                      style={{
+                        width: 72,
+                        height: 46,
+                        textAlign: 'center',
+                        fontSize: 16,
+                        fontWeight: 700,
+                        letterSpacing: '0.06em',
+                        background: '#F9FAFB',
+                        border: '1px solid #D1D5DB',
+                        borderRadius: 12,
+                        color: '#111827',
+                      }}
+                    />
+                    {idx < 3 && <span style={{ color: '#9CA3AF', fontWeight: 700 }}>-</span>}
+                  </span>
+                ))}
+              </div>
+
+              <div className="billing-meta-grid" style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 6 }}>유효기간</div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '72px 72px', gap: 6 }}>
+                    <input
+                      value={card.cardExpirationMonth}
+                      onChange={(e) => setCard((prev) => ({ ...prev, cardExpirationMonth: digitsOnly(e.target.value, 2) }))}
+                      className="input"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="MM"
+                      style={{ height: 44, background: '#F9FAFB', border: '1px solid #D1D5DB', borderRadius: 12, color: '#111827' }}
+                    />
+                    <input
+                      value={card.cardExpirationYear}
+                      onChange={(e) => setCard((prev) => ({ ...prev, cardExpirationYear: digitsOnly(e.target.value, 4) }))}
+                      className="input"
+                      inputMode="numeric"
+                      autoComplete="off"
+                      placeholder="YY"
+                      style={{ height: 44, background: '#F9FAFB', border: '1px solid #D1D5DB', borderRadius: 12, color: '#111827' }}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#374151', marginBottom: 6 }}>비밀번호 앞 2자리</div>
+                  <input
+                    value={card.cardPassword}
+                    onChange={(e) => setCard((prev) => ({ ...prev, cardPassword: digitsOnly(e.target.value, 2) }))}
+                    className="input"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    placeholder="••"
+                    style={{ width: 72, height: 44, background: '#F9FAFB', border: '1px solid #D1D5DB', borderRadius: 12, color: '#111827' }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gap: 8 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>생년월일 6자리 또는 사업자번호 10자리</div>
+                <input
+                  value={card.customerIdentityNumber}
+                  onChange={(e) => setCard((prev) => ({ ...prev, customerIdentityNumber: digitsOnly(e.target.value, 10) }))}
+                  className="input"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  placeholder="예: 900101 또는 1234567890"
+                  style={{ width: 'min(220px, 100%)', height: 44, background: '#F9FAFB', border: '1px solid #D1D5DB', borderRadius: 12, color: '#111827' }}
+                />
+              </div>
+            </div>
+            <div className="billing-card-modal-foot" style={{ padding: 16, borderTop: '1px solid #EEF2F7', display: 'flex', gap: 10, background: '#FFFFFF' }}>
+              <button
+                type="button"
+                onClick={() => setShowCardModal(false)}
+                className="btn-line"
+                style={{ flex: 1, marginTop: 0, height: 44, borderRadius: 12 }}
+              >
+                닫기
+              </button>
+              <button
+                type="button"
+                onClick={completeCardInput}
+                className="btn-primary"
+                style={{ flex: 1, marginTop: 0, height: 44, borderRadius: 12, background: '#3182F6' }}
+              >
+                입력 완료
               </button>
             </div>
           </div>
         </div>
       )}
 
-      <style>{`@media (max-width: 900px) { .billing-pricing-grid { grid-template-columns: 1fr !important; } }`}</style>
+      {resultPopup && (
+        <div
+          role="presentation"
+          onClick={() => setResultPopup(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1200,
+            background: 'rgba(15,23,42,.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '100%',
+              maxWidth: 360,
+              borderRadius: 16,
+              border: '1px solid #E5EAF3',
+              background: '#FFFFFF',
+              boxShadow: '0 16px 36px rgba(15,23,42,.22)',
+              overflow: 'hidden',
+            }}
+          >
+            <div style={{ padding: '16px 16px 8px', fontWeight: 800, fontSize: 16, color: resultPopup.type === 'success' ? '#0F9F6E' : '#DC2626' }}>
+              {resultPopup.type === 'success' ? '결제 성공' : '결제 실패'}
+            </div>
+            <div style={{ padding: '0 16px 14px', fontSize: 13, color: '#374151', lineHeight: 1.5 }}>
+              {resultPopup.message}
+            </div>
+            <div style={{ padding: 12, borderTop: '1px solid #EEF2F7', background: '#FAFBFF' }}>
+              <button
+                type="button"
+                onClick={() => setResultPopup(null)}
+                className="btn-primary"
+                style={{ width: '100%', marginTop: 0, height: 40, borderRadius: 10 }}
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <style>{`
+        @media (max-width: 900px) {
+          .billing-pricing-grid { grid-template-columns: 1fr !important; }
+        }
+        @media (max-width: 640px) {
+          .billing-card-modal { border-radius: 16px !important; }
+          .billing-card-modal-head { padding: 14px 14px 10px !important; }
+          .billing-card-modal-body { padding: 14px !important; gap: 10px !important; }
+          .billing-card-modal-foot { padding: 12px !important; gap: 8px !important; }
+          .card-number-grid { gap: 6px !important; }
+          .card-number-grid input {
+            height: 42px !important;
+            font-size: 14px !important;
+            letter-spacing: 0.03em !important;
+            padding-left: 6px !important;
+            padding-right: 6px !important;
+          }
+        }
+        @media (max-height: 820px) {
+          .billing-card-modal { max-height: calc(100dvh - 8px) !important; }
+          .billing-card-modal-head { padding: 12px 14px 8px !important; }
+          .billing-card-modal-head > div:nth-child(1) { font-size: 16px !important; }
+          .billing-card-modal-head > div:nth-child(2) { margin-top: 4px !important; font-size: 12px !important; }
+          .billing-card-modal-head > div:nth-child(3) { margin-top: 4px !important; font-size: 10px !important; }
+          .billing-card-modal-body { padding: 12px 14px !important; gap: 8px !important; }
+          .billing-card-modal-foot { padding: 10px 12px !important; }
+          .card-number-grid { gap: 6px !important; }
+          .card-number-grid input { height: 40px !important; font-size: 13px !important; }
+        }
+        @media (max-height: 760px) {
+          .billing-card-modal { max-height: calc(100dvh - 4px) !important; border-radius: 14px !important; }
+          .billing-card-modal-head { padding: 9px 12px 7px !important; }
+          .billing-card-modal-head > div:nth-child(1) { font-size: 15px !important; }
+          .billing-card-modal-head > div:nth-child(2) { margin-top: 3px !important; font-size: 11px !important; }
+          .billing-card-modal-head > div:nth-child(3) { display: none !important; }
+          .billing-card-modal-body { padding: 9px 12px !important; gap: 7px !important; }
+          .billing-amount-box { padding: 8px 10px !important; border-radius: 10px !important; }
+          .billing-amount-box > div:nth-child(1) { font-size: 11px !important; }
+          .billing-amount-box > div:nth-child(2) { font-size: 14px !important; }
+          .billing-meta-grid { gap: 8px !important; }
+          .billing-card-modal-body input { height: 36px !important; font-size: 12px !important; border-radius: 10px !important; }
+          .card-number-grid { gap: 5px !important; }
+          .card-number-grid input { font-size: 12px !important; letter-spacing: 0.02em !important; }
+          .billing-card-modal-foot { padding: 8px 10px !important; gap: 8px !important; }
+          .billing-card-modal-foot button { height: 36px !important; font-size: 12px !important; border-radius: 10px !important; }
+        }
+      `}</style>
       <Toast toastRef={toastRef} />
     </>
   )
