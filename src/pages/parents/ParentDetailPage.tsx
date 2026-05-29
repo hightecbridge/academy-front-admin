@@ -3,12 +3,13 @@ import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, TabBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, Fab, EditIcon, IconBtn, ChevronRight, useToast, Toast } from '../../components/common'
 import { useDataStore, clsBdg, clsCol, statusBdgCls, statusBdgTxt, totalFee, paidFee, isFullPaid, payPct, barCol } from '../../store/dataStore'
+import type { FeeItemKey } from '../../types'
 
 export function ParentDetailPage() {
   const { pid } = useParams()
   const navigate = useNavigate()
   const parents = useDataStore((s) => s.parents)
-  const toggleFee = useDataStore((s) => s.toggleFee)
+  const updateFee = useDataStore((s) => s.updateFee)
   const deleteParent = useDataStore((s) => s.deleteParent)
   const { ref: toastRef, show: showToast } = useToast()
   const [tabIdx, setTabIdx] = useState(0)
@@ -219,7 +220,7 @@ export function ParentDetailPage() {
                         <span className="pay-label">{f.label}</span>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <span className="pay-value">{f.amount.toLocaleString()}원</span>
-                          <Toggle checked={f.paid} onChange={(v) => toggleFee(s.sid, k as 'tuition' | 'book', v)} />
+                          <Toggle checked={f.paid} onChange={(v) => updateFee(s.sid, k as FeeItemKey, v ? { paid: true, paidAt: new Date().toISOString().slice(0, 10) } : { paid: false })} />
                         </div>
                       </div>
                     ))}

@@ -54,7 +54,7 @@ interface DataState {
   updateClass: (cid: number, cls: Partial<Omit<ClassRoom, 'cid'>>) => Promise<void>
   deleteClass: (cid: number) => Promise<void>
 
-  addParent:   (p: { name: string; phone: string; loginPhone?: string; loginPassword?: string; badgeColor?: string; badgeTextColor?: string }) => Promise<void>
+  addParent:   (p: { name: string; phone: string; loginPhone?: string; loginPassword?: string; badgeColor?: string; badgeTextColor?: string }) => Promise<Parent>
   addStudent:  (pid: number, s: { name: string; grade: string; classroomId: number; status?: string }) => Promise<void>
   deleteParent: (pid: number) => Promise<void>
   deleteStudent: (sid: number) => Promise<void>
@@ -384,7 +384,9 @@ export const useDataStore = create<DataState>((set, get) => ({
       badgeTextColor: parent.badgeTextColor ?? '#1D4ED8',
     })
     const ym = get().paymentYearMonth
-    set(s => ({ parents: [toParent(res.data.data, ym), ...s.parents] }))
+    const created = toParent(res.data.data, ym)
+    set(s => ({ parents: [created, ...s.parents] }))
+    return created
   },
 
   addStudent: async (pid, student) => {
