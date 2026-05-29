@@ -26,6 +26,21 @@ export function studentMaxForPlan(planId: PlanId | string | null | undefined): n
   }
 }
 
+export const PLAN_ORDER: PlanId[] = ['basic', 'standard', 'premium', 'enterprise']
+
+export function planTierIndex(planId: PlanId | string | null | undefined): number {
+  const i = PLAN_ORDER.indexOf((planId ?? 'basic') as PlanId)
+  return i >= 0 ? i : 0
+}
+
+export function isPlanUpgrade(from: PlanId | string, to: PlanId | string): boolean {
+  return planTierIndex(to) > planTierIndex(from)
+}
+
+export function isPlanDowngrade(from: PlanId | string, to: PlanId | string): boolean {
+  return planTierIndex(to) < planTierIndex(from)
+}
+
 export const PLANS: PricingPlan[] = [
   { id: 'basic', name: '베이직', desc: '학생 최대 50명', studentLimit: 50, priceM: 4400 },
   { id: 'standard', name: '스탠다드', desc: '학생 최대 100명', studentLimit: 100, priceM: 8800, popular: true },

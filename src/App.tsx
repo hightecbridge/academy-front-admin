@@ -28,6 +28,7 @@ import PaymentHistoryPage from './pages/billing/PaymentHistoryPage'
 import PointDeductionHistoryPage from './pages/billing/PointDeductionHistoryPage'
 import { useAuthStore } from './store/authStore'
 import { useBillingAccessStore } from './store/billingAccessStore'
+import { showBillingExpiredAlert } from './utils/billingExpiredAlert'
 
 function AuthSplash() {
   return (
@@ -59,6 +60,20 @@ function BillingGate({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     void useBillingAccessStore.getState().refresh()
   }, [])
+
+  /** 결제 필요 시 /billing 이동 후 알럿 (로그인·직접 URL 접근) */
+  useEffect(() => {
+    if (!ready || !paymentRequired) return
+    if (!location.pathname.startsWith('/billing')) return
+    if (!useBillingAccessStore.getState().consumeExpiredAlertOnBilling()) return
+    showBillingExpiredAlert()
+  }, [ready, paymentRequired, location.pathname])
+
+  useEffect(() => {
+    if (!ready || !paymentRequired) return
+    if (location.pathname.startsWith('/billing')) return
+    useBillingAccessStore.getState().requestExpiredAlertOnBilling()
+  }, [ready, paymentRequired, location.pathname])
 
   if (!ready) return <BillingSplash />
   if (paymentRequired && !location.pathname.startsWith('/billing')) {
@@ -114,7 +129,7 @@ export default function App() {
               <Route path="/attend"          element={<AttendListPage />} />
               <Route path="/attend/:cid/:date" element={<AttendSheetPage />} />
               <Route path="/attend/:cid/stats" element={<AttendStatsPage />} />
-              <Route path="/attend/:cid/homework" element={<HomeworkPage />} />
+              <Route path="/homework"         element={<HomeworkPage />} />
               <Route path="/message"         element={<MessagePage />} />
               <Route path="/billing"         element={<BillingPage />} />
               <Route path="/billing/charge" element={<PointChargePage />} />

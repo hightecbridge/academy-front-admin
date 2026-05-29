@@ -5,11 +5,16 @@ import client from '../api/client'
 export const useBillingAccessStore = create<{
   ready: boolean
   paymentRequired: boolean
+  /** /billing 도착 후 만료 안내 알럿 1회 표시 */
+  pendingExpiredAlertOnBilling: boolean
   refresh: () => Promise<void>
+  requestExpiredAlertOnBilling: () => void
+  consumeExpiredAlertOnBilling: () => boolean
   reset: () => void
-}>((set) => ({
+}>((set, get) => ({
   ready: false,
   paymentRequired: false,
+  pendingExpiredAlertOnBilling: false,
   refresh: async () => {
     try {
       const res = await client.get('/admin/billing')
@@ -19,5 +24,11 @@ export const useBillingAccessStore = create<{
       set({ paymentRequired: false, ready: true })
     }
   },
-  reset: () => set({ ready: false, paymentRequired: false }),
+  requestExpiredAlertOnBilling: () => set({ pendingExpiredAlertOnBilling: true }),
+  consumeExpiredAlertOnBilling: () => {
+    if (!get().pendingExpiredAlertOnBilling) return false
+    set({ pendingExpiredAlertOnBilling: false })
+    return true
+  },
+  reset: () => set({ ready: false, paymentRequired: false, pendingExpiredAlertOnBilling: false }),
 }))

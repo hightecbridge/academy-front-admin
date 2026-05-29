@@ -24,10 +24,25 @@ export interface Student {
   }
 }
 
+export type FeePaymentMethod = '현금' | '카드' | '계좌이체' | '제로페이' | '기타'
+
 export interface FeeItem {
+  id?: number
   label: string
   amount: number
   paid: boolean
+  yearMonth?: number
+  /** yyyy-MM-dd */
+  paidAt?: string | null
+  paymentMethod?: FeePaymentMethod | string | null
+}
+
+export type FeeItemKey = 'tuition' | 'book'
+
+export interface FeeUpdatePayload {
+  paid: boolean
+  paidAt?: string
+  paymentMethod?: string
 }
 
 export interface Notice {
@@ -97,7 +112,7 @@ export interface MessageSendLog {
   title: string
   bodyPreview: string
   recipientCount: number
-  messageType?: 'KAKAO_ALIMTALK' | 'SMS' | 'LMS' | 'MMS' | 'PAYMENT_SMS' | 'PAYMENT_NUDGE' | null
+  messageType?: 'AT' | 'KAKAO_ALIMTALK' | 'SMS' | 'LMS' | 'MMS' | 'PAYMENT_SMS' | 'PAYMENT_NUDGE' | null
   deductedPoints?: number | null
   remainingPoints?: number | null
   createdAt: string

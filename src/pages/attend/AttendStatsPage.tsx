@@ -45,11 +45,10 @@ export default function AttendStatsPage() {
     const totalSessions = sheets.length
     const present  = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && r.status === '출석')).length
     const late     = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && (r.status === '지각' || r.status === '조퇴'))).length
-    const absent   = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && r.status === '결석')).length
-    const excused  = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && r.status === '공결')).length
-    const noRecord = totalSessions - present - late - absent - excused
+    const absent   = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && (r.status === '결석' || r.status === '공결'))).length
+    const noRecord = totalSessions - present - late - absent
     const rate = totalSessions > 0 ? Math.round((present / totalSessions) * 100) : 0
-    return { ...stu, totalSessions, present, late, absent, excused, noRecord, rate }
+    return { ...stu, totalSessions, present, late, absent, noRecord, rate }
   })
 
   const sorted = [...stuStats].sort((a, b) =>
@@ -190,7 +189,6 @@ export default function AttendStatsPage() {
                   {stu.present  > 0 && <div style={{ flex: stu.present,  background: 'var(--ok)'     }} />}
                   {stu.late     > 0 && <div style={{ flex: stu.late,     background: 'var(--warn)'   }} />}
                   {stu.absent   > 0 && <div style={{ flex: stu.absent,   background: 'var(--err)'    }} />}
-                  {stu.excused  > 0 && <div style={{ flex: stu.excused,  background: 'var(--slate3)' }} />}
                   {stu.noRecord > 0 && <div style={{ flex: stu.noRecord, background: 'var(--bg3)'    }} />}
                 </div>
 
@@ -200,7 +198,6 @@ export default function AttendStatsPage() {
                     { label: '출석', cnt: stu.present  },
                     { label: '지각', cnt: stu.late     },
                     { label: '결석', cnt: stu.absent   },
-                    { label: '공결', cnt: stu.excused  },
                   ] as { label: AttendStatus; cnt: number }[]).map(({ label, cnt }) => (
                     <div key={label} style={{
                       display: 'flex', alignItems: 'center', gap: 4,

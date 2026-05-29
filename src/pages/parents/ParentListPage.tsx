@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, TabBar, Avatar, Badge, ChevronRight, Fab, SearchIcon, IconBtn } from '../../components/common'
+import { ParentBulkImportModal } from '../../components/parents/ParentBulkImportModal'
 import { useDataStore, clsBdg } from '../../store/dataStore'
 
 export function ParentListPage() {
@@ -10,6 +11,7 @@ export function ParentListPage() {
   const classes = useDataStore((s) => s.classes)
   const [tabIdx, setTabIdx] = useState(0)
   const [search, setSearch] = useState('')
+  const [showBulkImport, setShowBulkImport] = useState(false)
 
   // 탭 목록: 전체 + 동적 반 목록
   const tabs = ['전체', ...classes.map((c) => c.name)]
@@ -23,7 +25,32 @@ export function ParentListPage() {
 
   return (
     <>
-      <TopBar title="학부모 관리" sub={`총 ${parents.length}명`} right={<IconBtn><SearchIcon /></IconBtn>} />
+      <TopBar
+        title="학부모 관리"
+        sub={`총 ${parents.length}명`}
+        right={
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+            <button
+              type="button"
+              onClick={() => setShowBulkImport(true)}
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid var(--acc3)',
+                background: 'var(--acc2)',
+                color: 'var(--acc)',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              Excel 일괄등록
+            </button>
+            <IconBtn><SearchIcon /></IconBtn>
+          </div>
+        }
+      />
       <TabBar tabs={tabs} active={tabIdx} onChange={setTabIdx} />
       
         <div className="page-content-body">
@@ -63,6 +90,7 @@ export function ParentListPage() {
         </div>
       </div>
       <Fab onClick={() => navigate('/parents/new')} />
+      {showBulkImport && <ParentBulkImportModal onClose={() => setShowBulkImport(false)} />}
     </>
   )
 }

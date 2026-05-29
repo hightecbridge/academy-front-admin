@@ -1,12 +1,19 @@
 // src/pages/message/MessagePage.tsx
 import React, { useState, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import { TopBar, TabBar, Badge, useToast, Toast } from '../../components/common'
 import { useDataStore, isFullPaid } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
 import { usePointCosts, type MessageCostType } from '../../hooks/usePointCosts'
 import client from '../../api/client'
+import { buildTuitionAlimtalkMessage, TUITION_ALIMTALK_TEMPLATE_CODE } from '../../utils/tuitionAlimtalk'
 
 export default function MessagePage() {
+  const location = useLocation()
+  const initialTabIdx = React.useMemo(() => {
+    const qp = new URLSearchParams(location.search).get('tab')
+    return qp === 'payment' ? 2 : 0
+  }, [location.search])
   const { costByType, error: pointCostError } = usePointCosts()
   const [currentPoints, setCurrentPoints] = useState(0)
   const [selectedHistory, setSelectedHistory] = useState<null | {
@@ -17,10 +24,15 @@ export default function MessagePage() {
     createdAt: string
   }>(null)
 
-  const [tabIdx, setTabIdx] = useState(0)
+  const [tabIdx, setTabIdx] = useState(initialTabIdx)
+  React.useEffect(() => {
+    setTabIdx(initialTabIdx)
+  }, [initialTabIdx])
+
   const [msg, setMsg] = useState('')
   const user = useAuthStore((s) => s.user)
   const parents = useDataStore((s) => s.parents)
+  const paymentYearMonth = useDataStore((s) => s.paymentYearMonth)
   const classes = useDataStore((s) => s.classes)
   const senderNumbers = useDataStore((s) => s.senderNumbers)
   const fetchSenderNumbers = useDataStore((s) => s.fetchSenderNumbers)
@@ -38,6 +50,15 @@ export default function MessagePage() {
   const unpaid = allStu.filter((s) => !isFullPaid(s))
 
   const [chips, setChips] = useState<boolean[]>(() => classes.map((_, i) => i === 0))
+  React.useEffect(() => {
+    setChips((prev) => {
+      if (classes.length === 0) return []
+      if (prev.length === classes.length) return prev
+      const next = classes.map((_, i) => prev[i] ?? false)
+      if (!next.some(Boolean)) next[0] = true
+      return next
+    })
+  }, [classes])
   const clsCounts = classes.map((c) => ({ cid: c.cid, name: c.name, n: allStu.filter((s) => s.cls === c.name).length }))
   const selectedClasses = clsCounts.filter((_, i) => chips[i])
   const selectedCount = selectedClasses.reduce((a, c) => a + c.n, 0)
@@ -119,6 +140,16 @@ export default function MessagePage() {
     if (!t) return '(내용 없음)'
     const line = t.split(/\r?\n/)[0]?.trim() ?? ''
     return line.length > 80 ? `${line.slice(0, 80)}…` : line
+  }
+  const academyPrefix = user?.academyName?.trim()
+    ? `[${user.academyName.trim()}]`
+    : ''
+  const withDefaultPrefix = (text: string) => {
+    const t = text.trim()
+    if (!t) return ''
+    if (!academyPrefix) return t
+    if (t.startsWith(academyPrefix)) return t
+    return `${academyPrefix}\n${t}`
   }
 
   const normalizePhone = (v: string) => v.replace(/[^\d]/g, '')
@@ -363,32 +394,43 @@ export default function MessagePage() {
       .filter((p) => selectedClasses.some((c) => allStu.some((s) => s.pid === p.pid && s.cls === c.name)))
       .map((p) => p.phone),
   )
-  const classMessageType = resolveMessageType(msg.trim(), !!imageFile)
+  const classMessageType = resolveMessageType(withDefaultPrefix(msg), !!imageFile)
   const classPerCost = costByType[classMessageType]
   const classTotalCost = classRecipientPhones.length * classPerCost
   const classInsufficient = classTotalCost > currentPoints
 
   const allRecipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
-  const allMessageType = resolveMessageType(msg.trim(), !!imageFile)
+  const allMessageType = resolveMessageType(withDefaultPrefix(msg), !!imageFile)
   const allPerCost = costByType[allMessageType]
   const allTotalCost = allRecipientPhones.length * allPerCost
   const allInsufficient = allTotalCost > currentPoints
 
-  const paymentRecipientPhones = uniqueRecipientPhones(
-    parents
-      .filter((p) => unpaid.filter((s) => checkedUnpaid.has(s.sid)).some((s) => s.pid === p.pid))
-      .map((p) => p.phone),
-  )
-  const paymentBody = '안녕하세요. 미납 결제 내역이 있어 안내드립니다. 자세한 금액은 학원으로 문의 부탁드립니다.'
-  const paymentMessageType = resolveMessageType(paymentBody, !!imageFile)
-  const paymentPerCost = costByType[paymentMessageType]
-  const paymentTotalCost = paymentRecipientPhones.length * paymentPerCost
+  const paymentTargets = unpaid
+    .filter((s) => checkedUnpaid.has(s.sid))
+    .map((s) => {
+      const parent = parents.find((p) => p.pid === s.pid)
+      const phone = normalizePhone(parent?.phone ?? '')
+      if (!phone) return null
+      const unpaidFees = Object.values(s.fees).filter((f) => !f.paid)
+      const amount = unpaidFees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0)
+      return {
+        phone,
+        parentName: s.pname,
+        studentName: s.name,
+        amount,
+      }
+    })
+    .filter((v): v is NonNullable<typeof v> => v !== null)
+  const paymentRecipientCount = paymentTargets.length
+  const paymentPerCost = costByType.KAKAO_ALIMTALK
+  const paymentTotalCost = paymentRecipientCount * paymentPerCost
   const paymentInsufficient = paymentTotalCost > currentPoints
+  const actualMessage = withDefaultPrefix(msg)
 
   return (
     <>
       <TopBar title="메시지 발송" sub="알림톡·전체·반별" />
-      <TabBar tabs={['반별 발송', '전체 발송']} active={tabIdx} onChange={setTabIdx} />
+      <TabBar tabs={['반별 발송', '전체 발송', '수업료 안내']} active={tabIdx} onChange={setTabIdx} />
 
       <div className="page-content-body">
         {pointCostError && (
@@ -427,12 +469,26 @@ export default function MessagePage() {
               >
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>문자 차감 기준</div>
                 <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
-                  카카오 알림톡 {costByType.KAKAO_ALIMTALK}P · SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
+                  SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
                 </div>
               </div>
               <label className="input-label" style={{ marginTop: 0 }}>메시지 내용</label>
-              <textarea className="input-field" placeholder={'학부모님께 전달할 내용을 입력하세요.\n카카오 알림톡으로 발송됩니다.'} value={msg} onChange={(e) => setMsg(e.target.value)} maxLength={500} />
+              {academyPrefix && (
+                <input
+                  className="input-field"
+                  value={academyPrefix}
+                  readOnly
+                  style={{ marginBottom: 8, background: 'var(--bg2)', color: 'var(--slate2)' }}
+                />
+              )}
+              <textarea className="input-field" placeholder={'학부모님께 전달할 내용을 입력하세요.\n문자 메시지로 발송 됩니다.'} value={msg} onChange={(e) => setMsg(e.target.value)} maxLength={500} />
               <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 3, textAlign: 'right' }}>{msg.length}/500</div>
+              <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>실제 발송 메시지</div>
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: 'var(--slate)', lineHeight: 1.6 }}>
+                  {actualMessage || '(내용 없음)'}
+                </div>
+              </div>
               <ImageAttach />
               <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
                 현재 잔액: <b style={{ color: 'var(--navy)' }}>{currentPoints}P</b> ·
@@ -453,6 +509,7 @@ export default function MessagePage() {
                   const targetLabel = selectedClasses.map((c) => c.name).join('·')
                   if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                   try {
+                    const body = withDefaultPrefix(msg)
                     const selectedClassNames = new Set(selectedClasses.map((c) => c.name))
                     const selectedParentIds = new Set(
                       allStu.filter((s) => selectedClassNames.has(s.cls)).map((s) => s.pid),
@@ -465,12 +522,12 @@ export default function MessagePage() {
                     await saveMessageSendLog({
                       kind: 'CLASS',
                       targetLabel,
-                      title: msgTitle(msg),
-                      bodyPreview: msg.trim().slice(0, 500),
+                      title: msgTitle(body),
+                      bodyPreview: body.slice(0, 500),
                       recipientCount: recipientPhones.length,
                       messageType,
                       sendNo: senderNo,
-                      body: msg.trim(),
+                      body,
                       recipientPhones,
                       attachFiles,
                     })
@@ -484,7 +541,7 @@ export default function MessagePage() {
                     alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
                   }
                 }}>
-                알림톡 발송 ({selectedCount}명)
+                메시지 발송 ({selectedCount}명)
               </button>
             </div>
             <div className="sec">
@@ -526,12 +583,26 @@ export default function MessagePage() {
               >
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>문자 차감 기준</div>
                 <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
-                  카카오 알림톡 {costByType.KAKAO_ALIMTALK}P · SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
+                  SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
                 </div>
               </div>
               <label className="input-label" style={{ marginTop: 0 }}>메시지 내용</label>
+              {academyPrefix && (
+                <input
+                  className="input-field"
+                  value={academyPrefix}
+                  readOnly
+                  style={{ marginBottom: 8, background: 'var(--bg2)', color: 'var(--slate2)' }}
+                />
+              )}
               <textarea className="input-field" placeholder="전체 학부모에게 전달할 내용을 입력하세요." value={msg} onChange={(e) => setMsg(e.target.value)} maxLength={500} />
               <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 3, textAlign: 'right' }}>{msg.length}/500</div>
+              <div style={{ marginTop: 8, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>실제 발송 메시지</div>
+                <div style={{ whiteSpace: 'pre-wrap', fontSize: 13, color: 'var(--slate)', lineHeight: 1.6 }}>
+                  {actualMessage || '(내용 없음)'}
+                </div>
+              </div>
               <ImageAttach />
               <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
                 현재 잔액: <b style={{ color: 'var(--navy)' }}>{currentPoints}P</b> ·
@@ -551,18 +622,19 @@ export default function MessagePage() {
                 onClick={async () => {
                   if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                   try {
+                    const body = withDefaultPrefix(msg)
                     const recipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
                     const messageType = allMessageType
                     const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
                       kind: 'ALL',
                       targetLabel: '전체',
-                      title: msgTitle(msg),
-                      bodyPreview: msg.trim().slice(0, 500),
+                      title: msgTitle(body),
+                      bodyPreview: body.slice(0, 500),
                       recipientCount: recipientPhones.length,
                       messageType,
                       sendNo: senderNo,
-                      body: msg.trim(),
+                      body,
                       recipientPhones,
                       attachFiles,
                     })
@@ -607,7 +679,7 @@ export default function MessagePage() {
           </div>
         )}
 
-        {/* ── 카드결제 문자 ── */}
+        {/* ── 수납 안내 문자 ── */}
         {tabIdx === 2 && (
           <div>
             <SenderRow />
@@ -618,7 +690,7 @@ export default function MessagePage() {
               >
                 <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>문자 차감 기준</div>
                 <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
-                  카카오 알림톡 {costByType.KAKAO_ALIMTALK}P · SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
+                  SMS 단문 {costByType.SMS}P · LMS {costByType.LMS}P · MMS {costByType.MMS}P (건당)
                 </div>
               </div>
               <div className="row" style={{ marginBottom: 10 }}>
@@ -657,9 +729,9 @@ export default function MessagePage() {
               {checkedUnpaid.size > 0 && (
                 <div style={{ marginBottom: 10, padding: 10, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)', fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6 }}>
                   현재 잔액: <b style={{ color: 'var(--navy)' }}>{currentPoints}P</b> ·
-                  서비스: <b style={{ color: 'var(--navy)' }}>{messageTypeLabel(paymentMessageType)}</b> ·
+                  서비스: <b style={{ color: 'var(--navy)' }}>카카오 알림톡</b> ·
                   {' '}건당 차감: <b style={{ color: 'var(--navy)' }}>{paymentPerCost}P</b> ·
-                  {' '}대상: <b style={{ color: 'var(--navy)' }}>{paymentRecipientPhones.length}명</b> ·
+                  {' '}대상: <b style={{ color: 'var(--navy)' }}>{paymentRecipientCount}명</b> ·
                   {' '}총 차감: <b style={{ color: 'var(--err)' }}>{paymentTotalCost}P</b>
                 </div>
               )}
@@ -674,28 +746,44 @@ export default function MessagePage() {
                     const n = checkedUnpaid.size
                     if (!senderNo) { alert('발신 번호를 선택해주세요.'); return }
                     try {
-                      const selectedParentIds = new Set(
-                        unpaid.filter((s) => checkedUnpaid.has(s.sid)).map((s) => s.pid),
-                      )
-                      const recipientPhones = uniqueRecipientPhones(
-                        parents.filter((p) => selectedParentIds.has(p.pid)).map((p) => p.phone),
-                      )
-                      const messageType = paymentMessageType
-                      const attachFiles = await imageToAttachFiles()
-                      await saveMessageSendLog({
-                        kind: 'PAYMENT',
-                        targetLabel: '결제',
-                        title: '카드결제 문자',
-                        bodyPreview: `미납 학부모 ${n}명 대상`,
-                        recipientCount: recipientPhones.length,
-                        messageType,
-                        sendNo: senderNo,
-                        body: paymentBody,
-                        recipientPhones,
-                        attachFiles,
-                      })
-                      showToast(`${recipientPhones.length}명에게 카드결제 문자 발송 완료`)
-                      setCurrentPoints((p) => Math.max(0, p - paymentTotalCost))
+                      const academyName = user?.academyName?.trim() || '학원'
+                      let successCount = 0
+                      const failedTargets: string[] = []
+
+                      for (const target of paymentTargets) {
+                        const body = buildTuitionAlimtalkMessage({
+                          academyName,
+                          parentName: target.parentName,
+                          billingYearMonth: paymentYearMonth,
+                          studentName: target.studentName,
+                          amount: target.amount,
+                        })
+                        try {
+                          await saveMessageSendLog({
+                            kind: 'PAYMENT',
+                            targetLabel: '수납',
+                            title: `[수업료] ${target.studentName}`,
+                            bodyPreview: body.slice(0, 500),
+                            recipientCount: 1,
+                            messageType: 'PAYMENT_SMS',
+                            templateCode: TUITION_ALIMTALK_TEMPLATE_CODE,
+                            sendNo: senderNo,
+                            body,
+                            recipientPhones: [target.phone],
+                          })
+                          successCount += 1
+                        } catch {
+                          failedTargets.push(`${target.parentName}(${target.studentName})`)
+                        }
+                      }
+
+                      if (successCount > 0) {
+                        showToast(`${successCount}명에게 수업료 안내 문자 발송 완료`)
+                        setCurrentPoints((p) => Math.max(0, p - successCount * paymentPerCost))
+                      }
+                      if (failedTargets.length > 0) {
+                        alert(`일부 발송에 실패했습니다.\n실패 대상: ${failedTargets.join(', ')}`)
+                      }
                       setCheckedUnpaid(new Set())
                       setImagePreview(null)
                       setImageFile(null)
@@ -704,7 +792,7 @@ export default function MessagePage() {
                       alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
                     }
                   }}>
-                  선택 {checkedUnpaid.size}명에게 카드결제 문자 발송
+                  선택 {checkedUnpaid.size}명에게 수업료 안내 문자 발송
                 </button>
               )}
             </div>

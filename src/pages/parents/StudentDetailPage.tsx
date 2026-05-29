@@ -1,7 +1,7 @@
 // src/pages/parents/StudentDetailPage.tsx
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { TopBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, EditIcon, IconBtn } from '../../components/common'
+import { TopBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, EditIcon, IconBtn, useToast, Toast } from '../../components/common'
 import { useDataStore, clsBdg, clsCol, statusBdgCls, statusBdgTxt, totalFee, paidFee, payPct, barCol, isFullPaid } from '../../store/dataStore'
 
 const GRADES = ['초등 1','초등 2','초등 3','초등 4','초등 5','초등 6','중등 1','중등 2','중등 3','고등 1','고등 2','고등 3']
@@ -12,9 +12,29 @@ export function StudentDetailPage() {
   const navigate = useNavigate()
   const parents = useDataStore((s) => s.parents)
   const toggleFee = useDataStore((s) => s.toggleFee)
+  const deleteStudent = useDataStore((s) => s.deleteStudent)
+  const { ref: toastRef, show: showToast } = useToast()
+  const [deleting, setDeleting] = useState(false)
   const p = parents.find((x) => x.pid === Number(pid))
   const s = p?.students.find((x) => x.sid === Number(sid))
   if (!p || !s) return <div className="sec">학생을 찾을 수 없습니다.</div>
+
+  const handleDelete = async () => {
+    if (!window.confirm(
+      `${s.name} 학생을 삭제하시겠습니까?\n\n수납·출석·숙제 기록도 함께 삭제되며 되돌릴 수 없습니다.`,
+    )) return
+    setDeleting(true)
+    try {
+      await deleteStudent(s.sid)
+      showToast('학생이 삭제되었습니다.')
+      navigate(`/parents/${p.pid}`)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string } }; message?: string }
+      alert(err?.response?.data?.message ?? err?.message ?? '삭제에 실패했습니다.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const cc = clsCol(s.cls)
   const total = totalFee(s)
@@ -111,9 +131,18 @@ export function StudentDetailPage() {
           >
             학생 정보 수정
           </button>
-          <button className="btn-danger">학생 삭제</button>
+          <button
+            type="button"
+            className="btn-danger"
+            disabled={deleting}
+            style={{ opacity: deleting ? 0.6 : 1 }}
+            onClick={() => void handleDelete()}
+          >
+            {deleting ? '삭제 중…' : '학생 삭제'}
+          </button>
         </div>
       </div>
+      <Toast toastRef={toastRef} />
     </>
   )
 }

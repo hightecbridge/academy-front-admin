@@ -1,14 +1,18 @@
 // src/pages/payment/PaymentDetailPage.tsx
 import { useParams, useNavigate } from 'react-router-dom'
-import { TopBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, EditIcon, IconBtn, useToast, Toast } from '../../components/common'
+import { TopBar, Breadcrumb, Avatar, Badge, ProgBar, EditIcon, IconBtn, useToast, Toast } from '../../components/common'
+import FeePaymentRow from '../../components/payment/FeePaymentRow'
 import { useDataStore, clsBdg, statusBdgCls, statusBdgTxt, totalFee, paidFee, payPct, barCol, isFullPaid } from '../../store/dataStore'
-import type { Parent, Student } from '../../types'
+import { formatPaidMeta } from '../../utils/feePayment'
+import { formatYearMonthLabel } from '../../utils/paymentMonth'
+import type { FeeItemKey, Parent, Student } from '../../types'
 
 export default function PaymentDetailPage() {
   const { sid } = useParams()
   const navigate = useNavigate()
   const parents = useDataStore((s) => s.parents)
-  const toggleFee = useDataStore((s) => s.toggleFee)
+  const paymentYearMonth = useDataStore((s) => s.paymentYearMonth)
+  const updateFee = useDataStore((s) => s.updateFee)
   const { ref: toastRef, show: showToast } = useToast()
 
   let s: Student | null = null
@@ -26,16 +30,27 @@ export default function PaymentDetailPage() {
   const pct2 = payPct(student)
   const bc = barCol(student)
 
-  const handleToggle = (key: 'tuition' | 'book', v: boolean) => {
-    toggleFee(student.sid, key, v)
-    showToast(`${student.fees[key].label} ${v ? '완납' : '미납'} 변경`)
+  const saveFee = async (
+    key: FeeItemKey,
+    payload: { paid: boolean; paidAt?: string; paymentMethod?: string },
+  ) => {
+    const label = student.fees[key].label
+    try {
+      await updateFee(student.sid, key, payload)
+      const msg = payload.paid
+        ? `${label} 완납 저장 (${payload.paidAt ?? ''} ${payload.paymentMethod ?? ''})`.trim()
+        : `${label} 미납 저장`
+      showToast(msg)
+    } catch {
+      showToast('수납 상태 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.')
+    }
   }
 
   return (
     <>
       <TopBar
         title={student.name}
-        sub={`${student.cls} · ${student.grade}`}
+        sub={`${formatYearMonthLabel(paymentYearMonth)} · ${student.cls} · ${student.grade}`}
         onBack={() => navigate('/payment')}
         right={
           <IconBtn onClick={() => navigate(`/parents/${parent.pid}/student/${student.sid}/edit`)}>
@@ -50,7 +65,6 @@ export default function PaymentDetailPage() {
 
       <div className="page-content-body">
 
-        {/* 학생 정보 */}
         <div className="sec">
           <div className="hero-card">
             <Avatar name={parent.name} col={parent.col} tc={parent.tc} large />
@@ -65,29 +79,23 @@ export default function PaymentDetailPage() {
           </div>
         </div>
 
-        {/* 납부 현황 토글 */}
         <div className="sec">
-          <div className="sec-title">항목별 납부 현황</div>
+          <div className="sec-title">항목별 납부 등록</div>
           <div className="card">
-            {(Object.entries(student.fees) as [string, { label: string; amount: number; paid: boolean }][]).map(([k, f]) => (
-              <div key={k} style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)' }}>
-                <div className="row" style={{ marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{f.label}</div>
-                    <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 2 }}>{f.amount.toLocaleString()}원</div>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontSize: 12, color: f.paid ? 'var(--ok)' : 'var(--err)' }}>
-                      {f.paid ? '완납' : '미납'}
-                    </span>
-                    <Toggle checked={f.paid} onChange={(v) => handleToggle(k as 'tuition' | 'book', v)} />
-                  </div>
+            {(['tuition', 'book'] as FeeItemKey[]).map((k) => {
+              const f = student.fees[k]
+              const meta = formatPaidMeta(f)
+              return (
+                <div key={k}>
+                  {meta && (
+                    <div style={{ padding: '10px 16px 0', fontSize: 12, color: 'var(--ok)', fontWeight: 600 }}>
+                      등록 정보: {meta}
+                    </div>
+                  )}
+                  <FeePaymentRow fee={f} onSave={(payload) => saveFee(k, payload)} />
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--slate3)' }}>
-                  {f.paid ? '납부 완료' : '미납 상태 — 토글로 납부 처리'}
-                </div>
-              </div>
-            ))}
+              )
+            })}
             <div style={{ padding: '14px 16px', background: 'var(--bg2)' }}>
               <div className="row" style={{ marginBottom: 6 }}>
                 <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>청구 합계</span>
@@ -112,7 +120,6 @@ export default function PaymentDetailPage() {
           </div>
         </div>
 
-        {/* 카드결제 문자 */}
         {!isFullPaid(student) && (
           <div className="sec">
             <button className="btn-red" onClick={() => showToast('카드결제 문자 발송')}>

@@ -1,7 +1,7 @@
 // src/pages/parents/ParentDetailPage.tsx
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { TopBar, TabBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, Fab, EditIcon, IconBtn, ChevronRight } from '../../components/common'
+import { TopBar, TabBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, Fab, EditIcon, IconBtn, ChevronRight, useToast, Toast } from '../../components/common'
 import { useDataStore, clsBdg, clsCol, statusBdgCls, statusBdgTxt, totalFee, paidFee, isFullPaid, payPct, barCol } from '../../store/dataStore'
 
 export function ParentDetailPage() {
@@ -9,13 +9,34 @@ export function ParentDetailPage() {
   const navigate = useNavigate()
   const parents = useDataStore((s) => s.parents)
   const toggleFee = useDataStore((s) => s.toggleFee)
+  const deleteParent = useDataStore((s) => s.deleteParent)
+  const { ref: toastRef, show: showToast } = useToast()
   const [tabIdx, setTabIdx] = useState(0)
+  const [deleting, setDeleting] = useState(false)
 
   const p = parents.find((x) => x.pid === Number(pid))
   if (!p) return <div className="sec">학부모를 찾을 수 없습니다.</div>
 
   const totalAmt = p.students.reduce((a, s) => a + totalFee(s), 0)
   const paidAmt  = p.students.reduce((a, s) => a + paidFee(s), 0)
+
+  const handleDelete = async () => {
+    const studentNote = p.students.length > 0
+      ? `\n등록된 학생 ${p.students.length}명과 수납·출석·숙제 기록도 함께 삭제됩니다.`
+      : ''
+    if (!window.confirm(`${p.name} 학부모를 삭제하시겠습니까?${studentNote}\n\n이 작업은 되돌릴 수 없습니다.`)) return
+    setDeleting(true)
+    try {
+      await deleteParent(p.pid)
+      showToast('학부모가 삭제되었습니다.')
+      navigate('/parents')
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string } }; message?: string }
+      alert(err?.response?.data?.message ?? err?.message ?? '삭제에 실패했습니다.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   return (
     <>
@@ -74,8 +95,15 @@ export function ParentDetailPage() {
               </div>
             </div>
             <div className="sec">
-              <button className="btn-secondary">카카오 알림톡 발송</button>
-              <button className="btn-danger">학부모 삭제</button>
+              <button
+                type="button"
+                className="btn-danger"
+                disabled={deleting}
+                style={{ opacity: deleting ? 0.6 : 1 }}
+                onClick={() => void handleDelete()}
+              >
+                {deleting ? '삭제 중…' : '학부모 삭제'}
+              </button>
             </div>
           </div>
         )}
@@ -210,6 +238,7 @@ export function ParentDetailPage() {
         )}
 
       </div>
+      <Toast toastRef={toastRef} />
     </>
   )
 }

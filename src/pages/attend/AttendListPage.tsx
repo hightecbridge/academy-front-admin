@@ -1,5 +1,5 @@
 // src/pages/attend/AttendListPage.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, TabBar, Fab, ProgBar } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
@@ -9,11 +9,17 @@ export default function AttendListPage() {
   const classes = useDataStore((s) => s.classes)
   const parents = useDataStore((s) => s.parents)
   const attendSheets = useDataStore((s) => s.attendSheets)
+  const fetchAttend = useDataStore((s) => s.fetchAttend)
   const [tabIdx, setTabIdx] = useState(0)
 
   const allStudents = parents.flatMap((p) => p.students)
   const tabs = classes.map((c) => c.name)
   const currentCls = classes[tabIdx]
+
+  useEffect(() => {
+    if (!currentCls) return
+    void fetchAttend(currentCls.cid)
+  }, [currentCls?.cid, fetchAttend])
 
   if (!currentCls) {
     return (
@@ -109,20 +115,6 @@ export default function AttendListPage() {
             }}
           >
             오늘 출석 등록 / 확인
-          </button>
-          <button
-            className="btn-secondary"
-            style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
-            onClick={() => navigate(`/attend/${currentCls.cid}/homework`)}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ width: 15, height: 15 }}>
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-              <polyline points="14 2 14 8 20 8"/>
-              <line x1="9" y1="13" x2="15" y2="13"/>
-              <line x1="9" y1="17" x2="15" y2="17"/>
-              <polyline points="9 9 9.01 9"/>
-            </svg>
-            📝 숙제 관리
           </button>
         </div>
 

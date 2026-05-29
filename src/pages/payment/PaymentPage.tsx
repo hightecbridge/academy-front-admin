@@ -1,17 +1,42 @@
 // src/pages/payment/PaymentPage.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { TopBar, TabBar, Avatar, Badge, Toggle, ProgBar, ChevronRight, useToast, Toast } from '../../components/common'
+import { TopBar, TabBar, Avatar, Badge, ProgBar, ChevronRight, useToast, Toast } from '../../components/common'
+import FeePaymentRow from '../../components/payment/FeePaymentRow'
+import PaymentYearMonthSelect from '../../components/payment/PaymentYearMonthSelect'
 import { useDataStore, totalFee, paidFee, isFullPaid, isPartPaid, payPct, barCol, statusBdgCls, statusBdgTxt, clsBdg } from '../../store/dataStore'
+import { formatYearMonthLabel } from '../../utils/paymentMonth'
+import { formatPaidMeta } from '../../utils/feePayment'
+import { downloadPaymentStatusExcel } from '../../utils/paymentExport'
+import type { FeeItemKey } from '../../types'
 
 export default function PaymentPage() {
   const navigate = useNavigate()
   const parents = useDataStore((s) => s.parents)
   const classes = useDataStore((s) => s.classes)
-  const toggleFee = useDataStore((s) => s.toggleFee)
+  const paymentYearMonth = useDataStore((s) => s.paymentYearMonth)
+  const fetchParents = useDataStore((s) => s.fetchParents)
+  const setPaymentYearMonth = useDataStore((s) => s.setPaymentYearMonth)
+  const updateFee = useDataStore((s) => s.updateFee)
   const { ref: toastRef, show: showToast } = useToast()
   const [tabIdx, setTabIdx] = useState(0)
   const [q, setQ] = useState('')
+  const [monthLoading, setMonthLoading] = useState(false)
+
+  useEffect(() => {
+    void fetchParents(paymentYearMonth)
+  }, [])
+
+  const onYearMonthChange = async (ym: number) => {
+    if (ym === paymentYearMonth) return
+    setPaymentYearMonth(ym)
+    setMonthLoading(true)
+    try {
+      await fetchParents(ym)
+    } finally {
+      setMonthLoading(false)
+    }
+  }
 
   const allStu = parents.flatMap((p) => p.students.map((s) => ({
     ...s, pid: p.pid, pname: p.name, pcol: p.col, ptc: p.tc,
@@ -39,19 +64,72 @@ export default function PaymentPage() {
     return { c: cls.name, pct: ct > 0 ? Math.round((cp / ct) * 100) : 0, col: COLORS[ci % COLORS.length] }
   })
 
-  const handleToggle = (sid: number, key: 'tuition' | 'book', v: boolean, label: string, sname: string) => {
-    toggleFee(sid, key, v)
-    showToast(`${sname} ${label} ${v ? '완납' : '미납'} 변경`)
+  const handleExcelDownload = () => {
+    try {
+      downloadPaymentStatusExcel(parents, paymentYearMonth)
+      showToast('엑셀 파일을 다운로드했습니다.')
+    } catch {
+      showToast('엑셀 다운로드에 실패했습니다.')
+    }
+  }
+
+  const saveFee = async (
+    sid: number,
+    key: FeeItemKey,
+    label: string,
+    sname: string,
+    payload: { paid: boolean; paidAt?: string; paymentMethod?: string },
+  ) => {
+    try {
+      await updateFee(sid, key, payload)
+      const msg = payload.paid
+        ? `${sname} ${label} 완납 저장 (${payload.paidAt ?? ''} ${payload.paymentMethod ?? ''})`.trim()
+        : `${sname} ${label} 미납 저장`
+      showToast(msg)
+    } catch {
+      showToast('수납 상태 저장에 실패했습니다. 잠시 후 다시 시도해 주세요.')
+    }
   }
 
   return (
     <>
-      <TopBar title="수납현황" sub="2024년 3월" />
+      <TopBar
+        title="수납현황"
+        sub={formatYearMonthLabel(paymentYearMonth)}
+        right={
+          <button
+            type="button"
+            onClick={handleExcelDownload}
+            disabled={monthLoading || allStu.length === 0}
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              padding: '6px 10px',
+              borderRadius: 8,
+              border: '1px solid var(--acc3)',
+              background: 'var(--acc2)',
+              color: 'var(--acc)',
+              cursor: monthLoading || allStu.length === 0 ? 'not-allowed' : 'pointer',
+              opacity: monthLoading || allStu.length === 0 ? 0.5 : 1,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Excel 다운로드
+          </button>
+        }
+      />
       <TabBar tabs={['전체', '미납·일부납', '완납']} active={tabIdx} onChange={setTabIdx} />
 
       <div className="page-content-body">
 
-        {/* 상단 요약 */}
+        <div className="sec">
+          <PaymentYearMonthSelect
+            value={paymentYearMonth}
+            onChange={(ym) => void onYearMonthChange(ym)}
+            disabled={monthLoading}
+          />
+        </div>
+
         <div className="sec">
           <div className="stat-grid-3">
             <div className="stat-card">
@@ -72,7 +150,6 @@ export default function PaymentPage() {
           </div>
         </div>
 
-        {/* 전체 수납률 요약 */}
         <div className="sec">
           <div className="card" style={{ padding: '14px 16px' }}>
             <div className="row" style={{ marginBottom: 6 }}>
@@ -99,17 +176,33 @@ export default function PaymentPage() {
           </div>
         </div>
 
-        {/* 학생 목록 */}
         <div className="sec">
-          <div style={{ marginBottom: 10 }}>
+          <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <input
               className="input-field"
               placeholder="학생명/학부모명 검색"
               value={q}
               onChange={(e) => setQ(e.target.value)}
+              style={{ flex: 1, minWidth: 160 }}
             />
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ marginTop: 0, whiteSpace: 'nowrap' }}
+              disabled={monthLoading || allStu.length === 0}
+              onClick={handleExcelDownload}
+            >
+              Excel 다운로드
+            </button>
           </div>
-          <div className="sec-title">{filtered.length}명 — 토글로 납부 상태 변경</div>
+          <div className="sec-title">
+            {filtered.length}명 — 미납/완납 선택 후 저장
+            {allStu.length > 0 && (
+              <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--slate3)', marginLeft: 6 }}>
+                (엑셀: {formatYearMonthLabel(paymentYearMonth)} 전체 {allStu.length}명)
+              </span>
+            )}
+          </div>
           {filtered.map((s) => (
             <div key={s.sid} className="pay-card">
               <div className="pay-head" onClick={() => navigate(`/payment/${s.sid}`)}>
@@ -132,17 +225,24 @@ export default function PaymentPage() {
                 </div>
                 <ChevronRight />
               </div>
-              <div className="pay-body">
-                {(Object.entries(s.fees) as [string, { label: string; amount: number; paid: boolean }][]).map(([k, f]) => (
-                  <div key={k} className="pay-row">
-                    <span className="pay-label">{f.label}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <span className="pay-value">{f.amount.toLocaleString()}원</span>
-                      <Toggle checked={f.paid} onChange={(v) => handleToggle(s.sid, k as 'tuition' | 'book', v, f.label, s.name)} />
+              <div className="pay-body" style={{ padding: '0 12px 12px' }}>
+                {(['tuition', 'book'] as FeeItemKey[]).map((k) => {
+                  const f = s.fees[k]
+                  const meta = formatPaidMeta(f)
+                  return (
+                    <div key={k}>
+                      {meta && (
+                        <div style={{ fontSize: 11, color: 'var(--ok)', marginTop: 8, fontWeight: 600 }}>{meta}</div>
+                      )}
+                      <FeePaymentRow
+                        compact
+                        fee={f}
+                        onSave={(payload) => saveFee(s.sid, k, f.label, s.name, payload)}
+                      />
                     </div>
-                  </div>
-                ))}
-                <div className="pay-row" style={{ background: 'var(--bg2)' }}>
+                  )
+                })}
+                <div className="pay-row" style={{ background: 'var(--bg2)', marginTop: 8, borderRadius: 8 }}>
                   <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>납부 합계</span>
                   <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--ok)' }}>{paidFee(s).toLocaleString()}원</span>
                 </div>
@@ -150,7 +250,12 @@ export default function PaymentPage() {
             </div>
           ))}
           {filtered.some((s) => !isFullPaid(s)) && (
-            <button className="btn-red">미납자 카드결제 문자 일괄 발송</button>
+            <button
+              className="btn-red"
+              onClick={() => navigate('/message?tab=payment')}
+            >
+              미납자 수업료 안내 문자 일괄 발송
+            </button>
           )}
         </div>
 

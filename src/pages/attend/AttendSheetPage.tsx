@@ -3,9 +3,10 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
 import type { AttendRecord, AttendStatus } from '../../types'
 
-const STATUS_LIST: AttendStatus[] = ['출석', '지각', '조퇴', '결석', '공결']
+const STATUS_LIST: AttendStatus[] = ['출석', '지각', '조퇴', '결석']
 
 const STATUS_STYLE: Record<AttendStatus, { bg: string; tc: string; border: string }> = {
   출석: { bg: '#D1FAE5', tc: '#065F46', border: '#10B981' },
@@ -18,9 +19,14 @@ const STATUS_STYLE: Record<AttendStatus, { bg: string; tc: string; border: strin
 export default function AttendSheetPage() {
   const { cid, date } = useParams<{ cid: string; date: string }>()
   const navigate = useNavigate()
+  const user = useAuthStore((s) => s.user)
   const classes = useDataStore((s) => s.classes)
   const parents = useDataStore((s) => s.parents)
   const attendSheets = useDataStore((s) => s.attendSheets)
+  const fetchAttend = useDataStore((s) => s.fetchAttend)
+  const senderNumbers = useDataStore((s) => s.senderNumbers)
+  const fetchSenderNumbers = useDataStore((s) => s.fetchSenderNumbers)
+  const saveMessageSendLog = useDataStore((s) => s.saveMessageSendLog)
   const saveAttendSheet = useDataStore((s) => s.saveAttendSheet)
   const deleteAttendSheet = useDataStore((s) => s.deleteAttendSheet)
   const { ref: toastRef, show: showToast } = useToast()
@@ -45,6 +51,18 @@ export default function AttendSheetPage() {
   })
   const [showNoteFor, setShowNoteFor] = useState<number | null>(null)
   const [saved, setSaved] = useState(!!existing)
+  const [showNotifyModal, setShowNotifyModal] = useState(false)
+  const [notifyMessage, setNotifyMessage] = useState('')
+  const [sendingNotify, setSendingNotify] = useState(false)
+
+  useEffect(() => {
+    if (!cid) return
+    void fetchAttend(Number(cid))
+  }, [cid, fetchAttend])
+
+  useEffect(() => {
+    void fetchSenderNumbers()
+  }, [fetchSenderNumbers])
 
   // 학생 목록이 업데이트되면 기존 records에 없는 학생 추가
   useEffect(() => {
@@ -56,6 +74,25 @@ export default function AttendSheetPage() {
       return [...prev, ...newEntries]
     })
   }, [stuInClass.length])
+
+  const ownerPhone = user?.phone?.trim()
+  const ownerSender = ownerPhone ? { id: -1, label: '원장', number: ownerPhone, isDefault: true } : null
+  const senderOptions = ownerSender
+    ? [ownerSender, ...senderNumbers.filter((s) => s.number !== ownerPhone)]
+    : senderNumbers
+  const defaultSender = senderOptions.find((s) => s.isDefault) ?? senderOptions[0]
+  const [selectedSenderId, setSelectedSenderId] = useState<number>(defaultSender?.id ?? 0)
+  const normalizePhone = (v: string) => v.replace(/[^\d]/g, '')
+
+  useEffect(() => {
+    if (senderOptions.length === 0) {
+      setSelectedSenderId(0)
+      return
+    }
+    if (!senderOptions.some((s) => s.id === selectedSenderId)) {
+      setSelectedSenderId(defaultSender?.id ?? senderOptions[0].id)
+    }
+  }, [senderOptions, selectedSenderId, defaultSender])
 
   if (!cls || !date) return <div className="sec">정보를 찾을 수 없습니다.</div>
 
@@ -106,9 +143,146 @@ export default function AttendSheetPage() {
 
   const presentN = records.filter((r) => r.status === '출석').length
   const lateN = records.filter((r) => r.status === '지각' || r.status === '조퇴').length
-  const absentN = records.filter((r) => r.status === '결석').length
-  const excusedN = records.filter((r) => r.status === '공결').length
+  const absentN = records.filter((r) => r.status === '결석' || r.status === '공결').length
   const pct = records.length > 0 ? Math.round((presentN / records.length) * 100) : 0
+
+  const attendanceNoticeTemplate = () => {
+    return `[#{학원명}] 등원 안내
+
+#{보호자명}님, #{학생명} 학생이 등원하였습니다.
+등원시간 : #{등원일시}`
+  }
+
+  const formatAttendAppliedAt = (isoLike?: string) => {
+    if (!isoLike) return ''
+    const d = new Date(isoLike)
+    if (Number.isNaN(d.getTime())) return isoLike.replace('T', ' ').slice(0, 16)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+
+  const resolveFirstNotifyTarget = () => {
+    const presentStudentIds = new Set(
+      records
+        .filter((r) => r.status === '출석')
+        .map((r) => r.sid),
+    )
+    const candidates = stuInClass.filter((s) => presentStudentIds.has(s.sid))
+    const firstStudent = candidates[0] ?? stuInClass[0]
+    if (!firstStudent) return null
+    const parent = parents.find((p) => p.students.some((s) => s.sid === firstStudent.sid))
+    return {
+      academyName: user?.academyName?.trim() || cls?.name || '',
+      parentName: parent?.name ?? '보호자',
+      studentName: firstStudent.name,
+      attendDateTime: formatAttendAppliedAt(existing?.createdAt) || formatAttendAppliedAt(new Date().toISOString()),
+    }
+  }
+
+  const applyNoticeTemplate = (template: string, vars: { academyName: string; parentName: string; studentName: string; attendDateTime: string }) => {
+    return template
+      .replace(/#\{학원명\}/g, vars.academyName)
+      .replace(/#\{보호자명\}/g, vars.parentName)
+      .replace(/#\{학생명\}/g, vars.studentName)
+      .replace(/#\{등원일시\}/g, vars.attendDateTime)
+  }
+
+  const openNotifyModal = () => {
+    const template = attendanceNoticeTemplate()
+    const firstTarget = resolveFirstNotifyTarget()
+    setNotifyMessage(firstTarget ? applyNoticeTemplate(template, firstTarget) : template)
+    setShowNotifyModal(true)
+  }
+
+  const sendAttendanceNotice = async () => {
+    if (!cls) return
+    if (!existing?.createdAt) {
+      alert('출석부를 먼저 저장한 뒤 알림톡을 발송해주세요.')
+      return
+    }
+    const senderNo = normalizePhone(senderOptions.find((s) => s.id === selectedSenderId)?.number ?? '')
+    if (!senderNo) {
+      alert('발신 번호를 선택해주세요.')
+      return
+    }
+    const presentStudentIds = new Set(
+      records
+        .filter((r) => r.status === '출석')
+        .map((r) => r.sid),
+    )
+    const presentStudents = stuInClass.filter((s) => presentStudentIds.has(s.sid))
+    const academyName = user?.academyName?.trim() || cls.name
+    const requestDateTime = formatAttendAppliedAt(existing.createdAt)
+    const template = notifyMessage.trim()
+    const buildBody = (vars: { parentName: string; studentName: string }) =>
+      applyNoticeTemplate(template, {
+        academyName,
+        parentName: vars.parentName,
+        studentName: vars.studentName,
+        attendDateTime: requestDateTime,
+      })
+
+    const noticeTargets = presentStudents
+      .map((student) => {
+        const parent = parents.find((p) => p.students.some((s) => s.sid === student.sid))
+        const phone = normalizePhone(parent?.phone ?? '')
+        return {
+          studentName: student.name,
+          parentName: parent?.name ?? '보호자',
+          phone,
+        }
+      })
+      .filter((t) => t.phone.length > 0)
+
+    if (noticeTargets.length === 0) {
+      alert('출석 처리된 학생의 발송 대상 전화번호가 없습니다.')
+      return
+    }
+    if (!notifyMessage.trim()) {
+      alert('메시지 내용을 입력해주세요.')
+      return
+    }
+    setSendingNotify(true)
+    try {
+      let successCount = 0
+      const failedTargets: string[] = []
+
+      for (const target of noticeTargets) {
+        const body = buildBody({ parentName: target.parentName, studentName: target.studentName })
+        try {
+          await saveMessageSendLog({
+            kind: 'CLASS',
+            provider: 'ALIGO',
+            targetLabel: `${cls.name} 출석`,
+            title: `[출석] ${target.studentName} ${date}`,
+            bodyPreview: body.slice(0, 500),
+            recipientCount: 1,
+            messageType: 'KAKAO_ALIMTALK',
+            templateCode: 'UH_8400',
+            sendNo: senderNo,
+            body,
+            recipientPhones: [target.phone],
+          })
+          successCount += 1
+        } catch {
+          failedTargets.push(`${target.parentName}(${target.studentName})`)
+        }
+      }
+
+      if (successCount > 0) {
+        showToast(`출석 알림톡 ${successCount}명 발송 완료`)
+      }
+      if (failedTargets.length > 0) {
+        alert(`일부 발송에 실패했습니다.\n실패 대상: ${failedTargets.join(', ')}`)
+      }
+      if (successCount === noticeTargets.length) {
+        setShowNotifyModal(false)
+      }
+    } catch (e: any) {
+      alert(e?.response?.data?.message ?? e?.message ?? '출석 알림톡 발송에 실패했습니다.')
+    } finally {
+      setSendingNotify(false)
+    }
+  }
 
   return (
     <>
@@ -148,10 +322,9 @@ export default function AttendSheetPage() {
               {presentN > 0 && <div style={{ flex: presentN, background: 'rgba(255,255,255,0.8)' }} />}
               {lateN > 0 && <div style={{ flex: lateN, background: 'rgba(255,255,255,0.45)' }} />}
               {absentN > 0 && <div style={{ flex: absentN, background: 'rgba(0,0,0,0.2)' }} />}
-              {excusedN > 0 && <div style={{ flex: excusedN, background: 'rgba(0,0,0,0.1)' }} />}
             </div>
             <div style={{ display: 'flex', gap: 14 }}>
-              {[['출석', presentN], ['지각/조퇴', lateN], ['결석', absentN], ['공결', excusedN]].map(([label, cnt]) =>
+              {[['출석', presentN], ['지각/조퇴', lateN], ['결석', absentN]].map(([label, cnt]) =>
                 Number(cnt) > 0 ? (
                   <span key={String(label)} style={{ fontSize: 11, color: cls.textColor, opacity: 0.85 }}>
                     {label} {cnt}
@@ -309,10 +482,10 @@ export default function AttendSheetPage() {
           </button>
           <button
             className="btn-secondary"
-            style={{ marginTop: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7 }}
-            onClick={() => navigate(`/attend/${cid}/homework`)}
+            onClick={openNotifyModal}
+            style={{ marginTop: 8 }}
           >
-            📝 이 날짜 숙제 관리
+            출석 카카오 알림톡 보내기
           </button>
           {!isToday && (
             <div style={{ fontSize: 12, color: 'var(--slate3)', textAlign: 'center', marginTop: 8 }}>
@@ -321,6 +494,81 @@ export default function AttendSheetPage() {
           )}
         </div>
       </div>
+      {showNotifyModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(16,24,40,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+            padding: 16,
+          }}
+          onClick={() => {
+            if (!sendingNotify) setShowNotifyModal(false)
+          }}
+        >
+          <div
+            className="card"
+            style={{ width: 'min(620px, 96vw)', maxHeight: '88vh', overflow: 'auto', padding: 16 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="row" style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--navy)' }}>출석 카카오 알림톡 발송</div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!sendingNotify) setShowNotifyModal(false)
+                }}
+                style={{ border: 'none', background: 'none', fontSize: 22, color: 'var(--slate3)', cursor: 'pointer', lineHeight: 1 }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>
+              대상: {cls.name} 학부모 {Array.from(new Set(stuInClass.map((s) => parents.find((p) => p.students.some((ps) => ps.sid === s.sid))?.pid))).filter(Boolean).length}명
+            </div>
+            <label className="input-label" style={{ marginTop: 0 }}>발신 번호</label>
+            <select
+              className="input-field"
+              value={selectedSenderId}
+              onChange={(e) => setSelectedSenderId(Number(e.target.value))}
+            >
+              {senderOptions.length === 0 ? (
+                <option value={0}>등록된 발신번호 없음</option>
+              ) : (
+                senderOptions.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label} ({s.number}){s.isDefault ? ' ★' : ''}
+                  </option>
+                ))
+              )}
+            </select>
+            <label className="input-label">메시지 내용</label>
+            <textarea
+              className="input-field"
+              value={notifyMessage}
+              onChange={(e) => setNotifyMessage(e.target.value)}
+              maxLength={1000}
+              placeholder="출석 안내 내용을 입력하세요."
+              style={{ minHeight: 180 }}
+            />
+            <div style={{ fontSize: 11, color: 'var(--slate3)', textAlign: 'right', marginTop: 4 }}>
+              {notifyMessage.length}/1000
+            </div>
+            <button
+              className="btn-primary"
+              onClick={() => void sendAttendanceNotice()}
+              disabled={sendingNotify || senderOptions.length === 0 || notifyMessage.trim().length === 0}
+              style={{ opacity: (sendingNotify || senderOptions.length === 0 || notifyMessage.trim().length === 0) ? 0.55 : 1 }}
+            >
+              {sendingNotify ? '발송 중…' : '카카오 알림톡 발송'}
+            </button>
+          </div>
+        </div>
+      )}
       <Toast toastRef={toastRef} />
     </>
   )

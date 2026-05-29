@@ -1,6 +1,6 @@
 // src/pages/attend/HomeworkPage.tsx
-import { useState, useEffect, useMemo } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { TopBar, TabBar, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
 import type { HomeworkRecord } from '../../types'
@@ -19,7 +19,8 @@ function getRecentDates(count = 30) {
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토']
 
 export default function HomeworkPage() {
-  const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const deepLinkRef = useRef<{ cid?: string; date?: string } | null>(null)
   const classes    = useDataStore((s) => s.classes)
   const parents    = useDataStore((s) => s.parents)
   const homeworkSheets = useDataStore((s) => s.homeworkSheets)
@@ -63,6 +64,44 @@ export default function HomeworkPage() {
     if (cid != null) void fetchHomework(cid)
   }, [classes, tabIdx, fetchHomework])
 
+  // 출석 등에서 ?cid=&date= 로 진입 시 반·날짜 맞춤 (숙제 로드 후 처리)
+  useEffect(() => {
+    const cidParam = searchParams.get('cid')
+    const dateParam = searchParams.get('date')
+    if (!cidParam && !dateParam) return
+    deepLinkRef.current = { cid: cidParam ?? undefined, date: dateParam ?? undefined }
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
+
+  useEffect(() => {
+    const link = deepLinkRef.current
+    if (!link) return
+
+    if (link.cid && classes.length > 0) {
+      const idx = classes.findIndex((c) => String(c.cid) === link.cid)
+      if (idx >= 0 && idx !== tabIdx) {
+        setTabIdx(idx)
+        return
+      }
+    }
+
+    const cls = classes[tabIdx]
+    if (!cls) return
+
+    if (link.date) {
+      setSelectedDate(link.date)
+      const existing = homeworkSheets.find((s) => s.cid === cls.cid && s.date === link.date)
+      if (existing) {
+        setEditSheetId(String(existing.id))
+        setView('sheet')
+      } else {
+        setView('new')
+      }
+    }
+
+    deepLinkRef.current = null
+  }, [classes, tabIdx, homeworkSheets])
+
   // 현재 열린 시트 (id는 문자열/숫자 혼용 대비)
   const currentSheet = editSheetId
     ? homeworkSheets.find((s) => String(s.id) === String(editSheetId))
@@ -84,7 +123,7 @@ export default function HomeworkPage() {
   if (!currentCls) {
     return (
       <>
-        <TopBar title="숙제 관리" sub="반을 먼저 등록해주세요" onBack={() => navigate('/attend')} />
+        <TopBar title="숙제 관리" sub="반을 먼저 등록해주세요" />
         <div className="page-content-body">
           <div style={{ textAlign: 'center', padding: '60px 20px', color: 'var(--slate3)', fontSize: 13 }}>
             등록된 반이 없습니다.
@@ -225,7 +264,6 @@ export default function HomeworkPage() {
           }
         />
         <Breadcrumb items={[
-          { label: '출석 관리', onClick: () => navigate('/attend') },
           { label: '숙제 관리', onClick: () => setView('list') },
           { label: currentSheet.title },
         ]} />
@@ -414,7 +452,6 @@ export default function HomeworkPage() {
       <TopBar
         title="숙제 관리"
         sub={`${currentCls.name} · 숙제 ${clsSheets.length}건`}
-        onBack={() => navigate('/attend')}
         right={
           <button
             onClick={() => setView('new')}
@@ -431,10 +468,7 @@ export default function HomeworkPage() {
           </button>
         }
       />
-      <Breadcrumb items={[
-        { label: '출석 관리', onClick: () => navigate('/attend') },
-        { label: '숙제 관리' },
-      ]} />
+      <Breadcrumb items={[{ label: '숙제 관리' }]} />
       {tabs.length > 0 && (
         <TabBar tabs={tabs} active={tabIdx} onChange={(i) => { setTabIdx(i); setView('list'); setSheetSearch('') }} />
       )}

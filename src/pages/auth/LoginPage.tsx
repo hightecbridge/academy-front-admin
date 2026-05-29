@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuthStore } from '../../store/authStore'
+import { useBillingAccessStore } from '../../store/billingAccessStore'
 
 export default function LoginPage() {
   const navigate = useNavigate()
@@ -14,7 +15,16 @@ export default function LoginPage() {
     e.preventDefault()
     if (!email.trim() || !pw.trim()) return
     const ok = await login(email.trim(), pw)
-    if (ok) navigate('/', { replace: true })
+    if (ok) {
+      await useBillingAccessStore.getState().refresh()
+      const { paymentRequired } = useBillingAccessStore.getState()
+      if (paymentRequired) {
+        useBillingAccessStore.getState().requestExpiredAlertOnBilling()
+        navigate('/billing', { replace: true })
+      } else {
+        navigate('/', { replace: true })
+      }
+    }
   }
 
   return (
