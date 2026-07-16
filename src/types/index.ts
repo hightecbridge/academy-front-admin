@@ -15,6 +15,7 @@ export interface Student {
   sid: number
   name: string
   cls: string
+  classroomId?: number
   grade: string
   birth: string
   status: '재원' | '휴원' | '퇴원'

@@ -1,7 +1,7 @@
 // src/pages/class/ClassListPage.tsx
 import { useNavigate } from 'react-router-dom'
 import { TopBar, Fab, ProgBar } from '../../components/common'
-import { useDataStore, totalFee, paidFee } from '../../store/dataStore'
+import { useDataStore, totalFee, paidFee, studentInClass } from '../../store/dataStore'
 
 export default function ClassListPage() {
   const navigate = useNavigate()
@@ -48,7 +48,7 @@ export default function ClassListPage() {
             </div>
           )}
           {classes.map((cls) => {
-            const stuInClass = allStudents.filter((s) => s.cls === cls.name)
+            const stuInClass = allStudents.filter((s) => studentInClass(s, cls))
             const paidAmt = stuInClass.reduce((a, s) => a + paidFee(s), 0)
             const totalAmt = stuInClass.reduce((a, s) => a + totalFee(s), 0)
             const payPct = totalAmt > 0 ? Math.round((paidAmt / totalAmt) * 100) : 0

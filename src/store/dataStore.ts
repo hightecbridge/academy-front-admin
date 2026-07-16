@@ -132,6 +132,7 @@ function toParent(d: any, yearMonth: number): Parent {
       sid:    s.id,
       name:   s.name,
       cls:    s.classroomName ?? '',
+      classroomId: s.classroomId ?? undefined,
       grade:  s.grade,
       birth:  s.birthDate ?? '',
       status: (s.status ?? '재원') as '재원' | '휴원' | '퇴원',
@@ -363,9 +364,37 @@ export const useDataStore = create<DataState>((set, get) => ({
 
   updateClass: async (cid, cls) => {
     const cur = get().classes.find(c => c.cid === cid)
-    if (!cur) return
-    const res = await client.put(`/admin/classrooms/${cid}`, { ...cur, ...cls })
-    set(s => ({ classes: s.classes.map(c => c.cid === cid ? toClass(res.data.data) : c) }))
+    if (!cur) throw new Error('반 정보를 찾을 수 없습니다.')
+    const body = {
+      name: cls.name ?? cur.name,
+      subject: cls.subject ?? cur.subject,
+      teacher: cls.teacher ?? cur.teacher,
+      schedule: cls.schedule ?? cur.schedule,
+      capacity: cls.capacity ?? cur.capacity,
+      tuitionFee: cls.tuitionFee ?? cur.tuitionFee,
+      bookFee: cls.bookFee ?? cur.bookFee,
+      color: cls.color ?? cur.color,
+      textColor: cls.textColor ?? cur.textColor,
+    }
+    const res = await client.put(`/admin/classrooms/${cid}`, body)
+    const updated = toClass(res.data.data)
+    const nameChanged = cur.name !== updated.name
+    set(s => ({
+      classes: s.classes.map(c => c.cid === cid ? updated : c),
+      parents: nameChanged
+        ? s.parents.map(p => ({
+            ...p,
+            students: p.students.map(stu =>
+              (stu.classroomId === cid || (!stu.classroomId && stu.cls === cur.name))
+                ? { ...stu, cls: updated.name, classroomId: cid }
+                : stu
+            ),
+          }))
+        : s.parents,
+    }))
+    if (nameChanged) {
+      await get().fetchParents(get().paymentYearMonth)
+    }
   },
 
   deleteClass: async (cid) => {
@@ -652,5 +681,14 @@ export function clsCol(clsName: string): { bg: string; color: string; tc: string
 
 export function clsBdg(_clsName: string) {
   return 'badge-purple'
+}
+
+/** 반 소속 학생 매칭 — 반명 변경 후에도 classroomId 기준으로 유지 */
+export function studentInClass(
+  student: { cls: string; classroomId?: number },
+  cls: { cid: number; name: string },
+) {
+  if (student.classroomId != null) return student.classroomId === cls.cid
+  return student.cls === cls.name
 }
 

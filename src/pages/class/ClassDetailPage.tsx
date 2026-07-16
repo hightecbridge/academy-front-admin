@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, TabBar, Badge, Avatar, ProgBar, EditIcon, IconBtn, ChevronRight } from '../../components/common'
-import { useDataStore, totalFee, paidFee, statusBdgCls, statusBdgTxt, payPct, barCol } from '../../store/dataStore'
+import { useDataStore, totalFee, paidFee, statusBdgCls, statusBdgTxt, payPct, barCol, studentInClass } from '../../store/dataStore'
 
 export default function ClassDetailPage() {
   const { cid } = useParams()
@@ -17,7 +17,7 @@ export default function ClassDetailPage() {
 
   const allStudents = parents.flatMap((p) =>
     p.students
-      .filter((s) => s.cls === cls.name)
+      .filter((s) => studentInClass(s, cls))
       .map((s) => ({ ...s, pid: p.pid, pname: p.name, pcol: p.col, ptc: p.tc }))
   )
 

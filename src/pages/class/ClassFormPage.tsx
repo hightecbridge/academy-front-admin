@@ -1,5 +1,5 @@
 // src/pages/class/ClassFormPage.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
@@ -33,33 +33,63 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const [bookFee, setBookFee] = useState(String(existing?.bookFee ?? 45000))
   const [color, setColor] = useState(existing?.color ?? '#DBEAFE')
   const [textColor, setTextColor] = useState(existing?.textColor ?? '#1D4ED8')
+  const [saving, setSaving] = useState(false)
 
-  const handleSubmit = () => {
+  useEffect(() => {
+    if (mode !== 'edit' || !existing) return
+    setName(existing.name)
+    setSubject(existing.subject)
+    setTeacher(existing.teacher)
+    setSchedule(existing.schedule)
+    setCapacity(String(existing.capacity))
+    setTuitionFee(String(existing.tuitionFee))
+    setBookFee(String(existing.bookFee))
+    setColor(existing.color)
+    setTextColor(existing.textColor)
+  }, [mode, existing?.cid])
+
+  const handleSubmit = async () => {
     if (!name.trim()) { alert('반 이름을 입력하세요.'); return }
     if (!subject.trim()) { alert('과목을 입력하세요.'); return }
     if (!teacher.trim()) { alert('담당 교사를 입력하세요.'); return }
     if (!schedule.trim()) { alert('수업 일정을 입력하세요.'); return }
 
     const payload = {
-      name, subject, teacher, schedule,
+      name: name.trim(), subject, teacher, schedule,
       capacity: Number(capacity),
       tuitionFee: Number(tuitionFee),
       bookFee: Number(bookFee),
       color, textColor,
     }
 
-    if (mode === 'add') {
-      addClass(payload)
-      alert('반이 추가되었습니다.')
-      navigate('/class')
-    } else if (existing) {
-      updateClass(existing.cid, payload)
-      alert('저장되었습니다.')
-      navigate(`/class/${existing.cid}`)
+    setSaving(true)
+    try {
+      if (mode === 'add') {
+        await addClass(payload)
+        alert('반이 추가되었습니다.')
+        navigate('/class')
+      } else if (existing) {
+        await updateClass(existing.cid, payload)
+        alert('저장되었습니다.')
+        navigate(`/class/${existing.cid}`)
+      }
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string } }; message?: string }
+      alert(err?.response?.data?.message ?? err?.message ?? '저장에 실패했습니다.')
+    } finally {
+      setSaving(false)
     }
   }
 
   const title = mode === 'add' ? '반 추가' : '반 수정'
+
+  if (mode === 'edit' && !existing) {
+    return (
+      <div className="sec" style={{ padding: 20, color: 'var(--slate2)', fontSize: 14 }}>
+        반 정보를 불러오는 중입니다…
+      </div>
+    )
+  }
 
   return (
     <>
@@ -130,6 +160,7 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
             placeholder="예) A반, 월수금반"
             value={name}
             onChange={(e) => setName(e.target.value)}
+            disabled={saving}
           />
 
           <label className="input-label">과목 *</label>
@@ -202,8 +233,8 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
             </div>
           )}
 
-          <button className="btn-primary" onClick={handleSubmit}>
-            {mode === 'add' ? '반 추가 완료' : '저장'}
+          <button className="btn-primary" onClick={() => void handleSubmit()} disabled={saving}>
+            {saving ? '저장 중…' : mode === 'add' ? '반 추가 완료' : '저장'}
           </button>
           <button
             className="btn-secondary"
