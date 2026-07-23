@@ -66,6 +66,132 @@ function normalizePhone(v: string) {
   return v.replace(/[^\d]/g, '')
 }
 
+function RecipientPicker({
+  recipients,
+  checkedIds,
+  onToggle,
+  onSelectAll,
+  onClearAll,
+  onSelectKeys,
+  onDeselectKeys,
+  emptyText,
+}: {
+  recipients: MessageRecipient[]
+  checkedIds: Set<string>
+  onToggle: (key: string) => void
+  onSelectAll: () => void
+  onClearAll: () => void
+  onSelectKeys: (keys: string[]) => void
+  onDeselectKeys: (keys: string[]) => void
+  emptyText: string
+}) {
+  const [search, setSearch] = React.useState('')
+
+  const filtered = React.useMemo(() => {
+    const q = search.trim()
+    if (!q) return recipients
+    const nq = normalizePhone(q)
+    const lower = q.toLowerCase()
+    return recipients.filter((r) => {
+      if (r.name.toLowerCase().includes(lower)) return true
+      if (r.subLabel.toLowerCase().includes(lower)) return true
+      if (r.phone.includes(q)) return true
+      if (nq.length >= 3 && r.phoneDigits.includes(nq)) return true
+      return false
+    })
+  }, [recipients, search])
+
+  const searching = search.trim().length > 0
+  const filteredKeys = filtered.filter((r) => r.phoneDigits.length > 0).map((r) => r.key)
+
+  return (
+    <div className="sec">
+      <div className="row" style={{ marginBottom: 10 }}>
+        <span className="sec-title" style={{ marginBottom: 0 }}>
+          발송 대상 ({checkedIds.size}/{recipients.length}명)
+        </span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            type="button"
+            onClick={searching ? () => onSelectKeys(filteredKeys) : onSelectAll}
+            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--ok2)', color: '#027A48', border: 'none', cursor: 'pointer' }}
+          >
+            {searching ? '검색결과 선택' : '전체 선택'}
+          </button>
+          <button
+            type="button"
+            onClick={searching ? () => onDeselectKeys(filteredKeys) : onClearAll}
+            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg2)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}
+          >
+            {searching ? '검색결과 해제' : '전체 해제'}
+          </button>
+        </div>
+      </div>
+      <input
+        className="input-field"
+        style={{ marginTop: 0, marginBottom: 10 }}
+        placeholder="학생명·학부모명·전화번호로 검색..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+      />
+      {recipients.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>
+          {emptyText}
+        </div>
+      ) : filtered.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>
+          검색 결과가 없습니다
+        </div>
+      ) : (
+        <div className="card">
+          {filtered.map((r) => {
+            const checked = checkedIds.has(r.key)
+            const noPhone = r.phoneDigits.length === 0
+            return (
+              <div
+                key={r.key}
+                onClick={() => !noPhone && onToggle(r.key)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '12px 14px',
+                  borderBottom: '1px solid var(--border)',
+                  cursor: noPhone ? 'not-allowed' : 'pointer',
+                  background: checked && !noPhone ? 'var(--acc2)' : 'transparent',
+                  opacity: noPhone ? 0.55 : 1,
+                  transition: 'background .12s',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked && !noPhone}
+                  disabled={noPhone}
+                  onChange={() => onToggle(r.key)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width: 16, height: 16, accentColor: 'var(--acc)', flexShrink: 0 }}
+                />
+                <div className="avatar" style={{ background: r.col, color: r.tc, width: 32, height: 32, fontSize: 12 }}>
+                  {r.subLabel[0] || r.name[0]}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row">
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{r.subLabel}</span>
+                    {noPhone && <Badge cls="badge-red">번호 없음</Badge>}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>
+                    학부모 {r.name} · {r.phone || '연락처 미등록'}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function MessagePage() {
   const location = useLocation()
   const initialTabIdx = React.useMemo(() => {
@@ -181,11 +307,43 @@ export default function MessagePage() {
 
   const clearClassParents = () => setCheckedClassParentIds(new Set())
 
+  const selectClassParentKeys = (keys: string[]) => {
+    setCheckedClassParentIds((prev) => {
+      const next = new Set(prev)
+      keys.forEach((k) => next.add(k))
+      return next
+    })
+  }
+
+  const deselectClassParentKeys = (keys: string[]) => {
+    setCheckedClassParentIds((prev) => {
+      const next = new Set(prev)
+      keys.forEach((k) => next.delete(k))
+      return next
+    })
+  }
+
   const selectAllParents = () => {
     setCheckedAllParentIds(new Set(allRecipients.map((r) => r.key)))
   }
 
   const clearAllParents = () => setCheckedAllParentIds(new Set())
+
+  const selectAllParentKeys = (keys: string[]) => {
+    setCheckedAllParentIds((prev) => {
+      const next = new Set(prev)
+      keys.forEach((k) => next.add(k))
+      return next
+    })
+  }
+
+  const deselectAllParentKeys = (keys: string[]) => {
+    setCheckedAllParentIds((prev) => {
+      const next = new Set(prev)
+      keys.forEach((k) => next.delete(k))
+      return next
+    })
+  }
 
   React.useEffect(() => {
     void fetchMessageSends()
@@ -248,6 +406,20 @@ export default function MessagePage() {
   }
 
   const [checkedUnpaid, setCheckedUnpaid] = useState<Set<number>>(() => new Set(unpaid.map((s) => s.sid)))
+  const [unpaidSearch, setUnpaidSearch] = useState('')
+  const filteredUnpaid = React.useMemo(() => {
+    const q = unpaidSearch.trim()
+    if (!q) return unpaid
+    const nq = normalizePhone(q)
+    const lower = q.toLowerCase()
+    return unpaid.filter((s) => {
+      if (s.name.toLowerCase().includes(lower)) return true
+      if (s.parentName.toLowerCase().includes(lower)) return true
+      if (s.parentPhone.includes(q)) return true
+      if (nq.length >= 3 && normalizePhone(s.parentPhone).includes(nq)) return true
+      return false
+    })
+  }, [unpaid, unpaidSearch])
   const toggleUnpaid = (sid: number) => {
     setCheckedUnpaid((prev) => {
       const next = new Set(prev)
@@ -480,96 +652,6 @@ export default function MessagePage() {
   const paymentInsufficient = paymentTotalCost > currentPoints
   const actualMessage = withDefaultPrefix(msg)
 
-  const RecipientPicker = ({
-    recipients,
-    checkedIds,
-    onToggle,
-    onSelectAll,
-    onClearAll,
-    emptyText,
-  }: {
-    recipients: MessageRecipient[]
-    checkedIds: Set<string>
-    onToggle: (key: string) => void
-    onSelectAll: () => void
-    onClearAll: () => void
-    emptyText: string
-  }) => (
-    <div className="sec">
-      <div className="row" style={{ marginBottom: 10 }}>
-        <span className="sec-title" style={{ marginBottom: 0 }}>
-          발송 대상 학부모 ({checkedIds.size}/{recipients.length}명)
-        </span>
-        <div style={{ display: 'flex', gap: 6 }}>
-          <button
-            type="button"
-            onClick={onSelectAll}
-            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--ok2)', color: '#027A48', border: 'none', cursor: 'pointer' }}
-          >
-            전체 선택
-          </button>
-          <button
-            type="button"
-            onClick={onClearAll}
-            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg2)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}
-          >
-            전체 해제
-          </button>
-        </div>
-      </div>
-      {recipients.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>
-          {emptyText}
-        </div>
-      ) : (
-        <div className="card">
-          {recipients.map((r) => {
-            const checked = checkedIds.has(r.key)
-            const noPhone = r.phoneDigits.length === 0
-            return (
-              <div
-                key={r.key}
-                onClick={() => !noPhone && onToggle(r.key)}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 10,
-                  padding: '12px 14px',
-                  borderBottom: '1px solid var(--border)',
-                  cursor: noPhone ? 'not-allowed' : 'pointer',
-                  background: checked && !noPhone ? 'var(--acc2)' : 'transparent',
-                  opacity: noPhone ? 0.55 : 1,
-                  transition: 'background .12s',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={checked && !noPhone}
-                  disabled={noPhone}
-                  onChange={() => onToggle(r.key)}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ width: 16, height: 16, accentColor: 'var(--acc)', flexShrink: 0 }}
-                />
-                <div className="avatar" style={{ background: r.col, color: r.tc, width: 32, height: 32, fontSize: 12 }}>
-                  {r.name[0]}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="row">
-                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{r.name}</span>
-                    {noPhone && <Badge cls="badge-red">번호 없음</Badge>}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>
-                    {r.phone || '연락처 미등록'} · {r.subLabel}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-
   return (
     <>
       <TopBar title="메시지 발송" sub="알림톡·전체·반별" />
@@ -612,6 +694,8 @@ export default function MessagePage() {
               onToggle={toggleClassParent}
               onSelectAll={selectAllClassParents}
               onClearAll={clearClassParents}
+              onSelectKeys={selectClassParentKeys}
+              onDeselectKeys={deselectClassParentKeys}
               emptyText="선택한 반에 해당하는 학부모가 없습니다"
             />
             <div className="sec">
@@ -725,6 +809,8 @@ export default function MessagePage() {
               onToggle={toggleAllParent}
               onSelectAll={selectAllParents}
               onClearAll={clearAllParents}
+              onSelectKeys={selectAllParentKeys}
+              onDeselectKeys={deselectAllParentKeys}
               emptyText="등록된 학부모가 없습니다"
             />
             <div className="sec">
@@ -842,32 +928,65 @@ export default function MessagePage() {
                 </div>
               </div>
               <div className="row" style={{ marginBottom: 10 }}>
-                <span className="sec-title" style={{ marginBottom: 0 }}>미납 학부모 선택 ({unpaid.length}명)</span>
+                <span className="sec-title" style={{ marginBottom: 0 }}>미납 학부모 선택 ({checkedUnpaid.size}/{unpaid.length}명)</span>
                 <div style={{ display: 'flex', gap: 6 }}>
-                  <button onClick={() => setCheckedUnpaid(new Set(unpaid.map((s) => s.sid)))}
-                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--ok2)', color: '#027A48', border: 'none', cursor: 'pointer' }}>전체 선택</button>
-                  <button onClick={() => setCheckedUnpaid(new Set())}
-                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg2)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}>전체 해제</button>
+                  <button onClick={() => {
+                    if (unpaidSearch.trim()) {
+                      setCheckedUnpaid((prev) => {
+                        const next = new Set(prev)
+                        filteredUnpaid.forEach((s) => next.add(s.sid))
+                        return next
+                      })
+                    } else {
+                      setCheckedUnpaid(new Set(unpaid.map((s) => s.sid)))
+                    }
+                  }}
+                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--ok2)', color: '#027A48', border: 'none', cursor: 'pointer' }}>
+                    {unpaidSearch.trim() ? '검색결과 선택' : '전체 선택'}
+                  </button>
+                  <button onClick={() => {
+                    if (unpaidSearch.trim()) {
+                      setCheckedUnpaid((prev) => {
+                        const next = new Set(prev)
+                        filteredUnpaid.forEach((s) => next.delete(s.sid))
+                        return next
+                      })
+                    } else {
+                      setCheckedUnpaid(new Set())
+                    }
+                  }}
+                    style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg2)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}>
+                    {unpaidSearch.trim() ? '검색결과 해제' : '전체 해제'}
+                  </button>
                 </div>
               </div>
+              <input
+                className="input-field"
+                style={{ marginTop: 0, marginBottom: 10 }}
+                placeholder="학생명·학부모명·전화번호로 검색..."
+                value={unpaidSearch}
+                onChange={(e) => setUnpaidSearch(e.target.value)}
+              />
               {unpaid.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>미납 학생이 없습니다</div>
+              ) : filteredUnpaid.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>검색 결과가 없습니다</div>
               ) : (
                 <div className="card">
-                  {unpaid.map((s) => {
+                  {filteredUnpaid.map((s) => {
                     const labels = Object.values(s.fees).filter((f) => !f.paid).map((f) => f.label).join('·')
                     const checked = checkedUnpaid.has(s.sid)
                     return (
                       <div key={s.sid} onClick={() => toggleUnpaid(s.sid)}
                         style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', background: checked ? 'var(--err2)' : 'transparent', transition: 'background .12s' }}>
-                        <input type="checkbox" checked={checked} onChange={() => toggleUnpaid(s.sid)} style={{ width: 16, height: 16, accentColor: 'var(--err)', flexShrink: 0 }} />
-                        <div className="avatar" style={{ background: s.col, color: s.tc, width: 32, height: 32, fontSize: 12 }}>{s.parentName[0]}</div>
+                        <input type="checkbox" checked={checked} onChange={() => toggleUnpaid(s.sid)} onClick={(e) => e.stopPropagation()} style={{ width: 16, height: 16, accentColor: 'var(--err)', flexShrink: 0 }} />
+                        <div className="avatar" style={{ background: s.col, color: s.tc, width: 32, height: 32, fontSize: 12 }}>{s.name[0]}</div>
                         <div style={{ flex: 1 }}>
                           <div className="row">
-                            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{s.parentName}</span>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{s.name}</span>
                             <Badge cls="badge-red">미납</Badge>
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 1 }}>{s.name} · {labels}</div>
+                          <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 1 }}>학부모 {s.parentName} · {labels}</div>
                         </div>
                       </div>
                     )
