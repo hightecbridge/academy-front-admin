@@ -1,9 +1,7 @@
 import * as XLSX from 'xlsx'
-import type { Parent, Student } from '../types'
+import type { Student } from '../types'
 import { isFullPaid, isPartPaid, paidFee, payPct, totalFee } from '../store/dataStore'
 import { formatYearMonthLabel, parseYearMonth } from './paymentMonth'
-
-type ExportStudent = Student & { pname: string; phone: string }
 
 const HEADERS = [
   '수납년월',
@@ -28,13 +26,7 @@ const HEADERS = [
   '미납합계(원)',
 ] as const
 
-function flatStudents(parents: Parent[]): ExportStudent[] {
-  return parents.flatMap((p) =>
-    p.students.map((s) => ({ ...s, pname: p.name, phone: p.phone })),
-  )
-}
-
-function paymentStatusLabel(s: ExportStudent): string {
+function paymentStatusLabel(s: Student): string {
   if (isFullPaid(s)) return '완납'
   if (isPartPaid(s)) return '일부납'
   return '미납'
@@ -44,7 +36,7 @@ function feeStatusLabel(paid: boolean): string {
   return paid ? '완납' : '미납'
 }
 
-function rowFromStudent(s: ExportStudent, ymLabel: string): (string | number)[] {
+function rowFromStudent(s: Student, ymLabel: string): (string | number)[] {
   const total = totalFee(s)
   const paid = paidFee(s)
   const tuition = s.fees.tuition
@@ -52,8 +44,8 @@ function rowFromStudent(s: ExportStudent, ymLabel: string): (string | number)[] 
   return [
     ymLabel,
     s.name,
-    s.pname,
-    s.phone,
+    s.parentName,
+    s.parentPhone,
     s.cls,
     s.grade,
     s.status,
@@ -73,7 +65,7 @@ function rowFromStudent(s: ExportStudent, ymLabel: string): (string | number)[] 
   ]
 }
 
-function sortStudents(students: ExportStudent[]): ExportStudent[] {
+function sortStudents(students: Student[]): Student[] {
   return [...students].sort((a, b) => {
     const byCls = a.cls.localeCompare(b.cls, 'ko')
     if (byCls !== 0) return byCls
@@ -81,11 +73,11 @@ function sortStudents(students: ExportStudent[]): ExportStudent[] {
   })
 }
 
-export function downloadPaymentStatusExcel(parents: Parent[], yearMonth: number) {
+export function downloadPaymentStatusExcel(students: Student[], yearMonth: number) {
   const ymLabel = formatYearMonthLabel(yearMonth)
   const { year, month } = parseYearMonth(yearMonth)
-  const students = sortStudents(flatStudents(parents))
-  const dataRows = students.map((s) => rowFromStudent(s, ymLabel))
+  const rows = sortStudents(students)
+  const dataRows = rows.map((s) => rowFromStudent(s, ymLabel))
 
   const wb = XLSX.utils.book_new()
 
@@ -99,14 +91,14 @@ export function downloadPaymentStatusExcel(parents: Parent[], yearMonth: number)
   ]
   XLSX.utils.book_append_sheet(wb, ws, '수납현황')
 
-  const tAmt = students.reduce((a, s) => a + totalFee(s), 0)
-  const pAmt = students.reduce((a, s) => a + paidFee(s), 0)
-  const fullCnt = students.filter(isFullPaid).length
-  const partCnt = students.filter(isPartPaid).length
-  const noneCnt = students.length - fullCnt - partCnt
+  const tAmt = rows.reduce((a, s) => a + totalFee(s), 0)
+  const pAmt = rows.reduce((a, s) => a + paidFee(s), 0)
+  const fullCnt = rows.filter(isFullPaid).length
+  const partCnt = rows.filter(isPartPaid).length
+  const noneCnt = rows.length - fullCnt - partCnt
   const summaryWs = XLSX.utils.aoa_to_sheet([
     ['수납년월', ymLabel],
-    ['학생 수', students.length],
+    ['학생 수', rows.length],
     ['완납', fullCnt],
     ['일부납', partCnt],
     ['미납', noneCnt],

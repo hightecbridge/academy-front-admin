@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, TabBar, ProgBar } from '../../components/common'
-import { useDataStore } from '../../store/dataStore'
+import { useDataStore, studentInClass } from '../../store/dataStore'
 import type { AttendStatus } from '../../types'
 
 const STATUS_COLOR: Record<AttendStatus, string> = {
@@ -22,16 +22,14 @@ export default function AttendStatsPage() {
   const { cid } = useParams<{ cid: string }>()
   const navigate = useNavigate()
   const classes = useDataStore((s) => s.classes)
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const attendSheets = useDataStore((s) => s.attendSheets)
   const [period, setPeriod] = useState<'month' | 'all'>('month')
   const [sortBy, setSortBy] = useState<'name' | 'rate'>('name')
 
   const cls = classes.find((c) => c.cid === Number(cid))
-  const allStudents = parents.flatMap((p) =>
-    p.students.map((s) => ({ ...s, pname: p.name, pcol: p.col, ptc: p.tc }))
-  )
-  const stuInClass = allStudents.filter((s) => s.cls === cls?.name)
+  const allStudents = students
+  const stuInClass = cls ? allStudents.filter((s) => studentInClass(s, cls)) : []
   const today = new Date()
   const ym = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
 
@@ -168,12 +166,12 @@ export default function AttendStatsPage() {
                 {/* 이름 + 출석률 */}
                 <div className="row" style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <div className="avatar" style={{ background: stu.pcol, color: stu.ptc, width: 34, height: 34, fontSize: 13 }}>
+                    <div className="avatar" style={{ background: stu.col, color: stu.tc, width: 34, height: 34, fontSize: 13 }}>
                       {stu.name[0]}
                     </div>
                     <div>
                       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{stu.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 1 }}>{stu.grade} · {stu.pname}</div>
+                      <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 1 }}>{stu.grade} · {stu.parentName}</div>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>

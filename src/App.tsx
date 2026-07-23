@@ -1,11 +1,10 @@
 // src/App.tsx
-import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom'
 import { useEffect } from 'react'
 import Layout from './components/layout/Layout'
 import HomePage from './pages/home/HomePage'
 import { ParentListPage } from './pages/parents/ParentListPage'
-import { ParentDetailPage } from './pages/parents/ParentDetailPage'
-import { StudentDetailPage, StudentFormPage, ParentFormPage } from './pages/parents/StudentDetailPage'
+import { StudentDetailPage, StudentFormPage } from './pages/parents/StudentDetailPage'
 import ClassListPage from './pages/class/ClassListPage'
 import ClassDetailPage from './pages/class/ClassDetailPage'
 import ClassFormPage from './pages/class/ClassFormPage'
@@ -82,6 +81,11 @@ function BillingGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+function LegacyStudentRedirect({ edit = false }: { edit?: boolean }) {
+  const { legacySid } = useParams()
+  return <Navigate to={edit ? `/parents/${legacySid}/edit` : `/parents/${legacySid}`} replace />
+}
+
 export default function App() {
   const { user, authReady } = useAuthStore()
 
@@ -105,18 +109,18 @@ export default function App() {
             <Routes>
               <Route path="/"  element={<HomePage />} />
 
-              {/* 학부모 */}
-              <Route path="/parents"                            element={<ParentListPage />} />
-              <Route path="/parents/new"                        element={<ParentFormPage mode="add" />} />
-              <Route path="/parents/:pid"                       element={<ParentDetailPage />} />
-              <Route path="/parents/:pid/edit"                  element={<ParentFormPage mode="edit" />} />
-              <Route path="/parents/:pid/student/new"           element={<StudentFormPage mode="add" />} />
-              <Route path="/parents/:pid/student/:sid"          element={<StudentDetailPage />} />
-              <Route path="/parents/:pid/student/:sid/edit"     element={<StudentFormPage mode="edit" />} />
+              {/* 학생 관리 */}
+              <Route path="/parents" element={<ParentListPage />} />
+              <Route path="/parents/new" element={<StudentFormPage mode="add" />} />
+              <Route path="/parents/:sid" element={<StudentDetailPage />} />
+              <Route path="/parents/:sid/edit" element={<StudentFormPage mode="edit" />} />
+              <Route path="/parents/:pid/student/:legacySid" element={<LegacyStudentRedirect />} />
+              <Route path="/parents/:pid/student/:legacySid/edit" element={<LegacyStudentRedirect edit />} />
 
               {/* 클래스 */}
               <Route path="/class"          element={<ClassListPage />} />
               <Route path="/class/new"      element={<ClassFormPage mode="add" />} />
+              <Route path="/class/:cid/student/new" element={<StudentFormPage mode="add" />} />
               <Route path="/class/:cid"     element={<ClassDetailPage />} />
               <Route path="/class/:cid/edit" element={<ClassFormPage mode="edit" />} />
 

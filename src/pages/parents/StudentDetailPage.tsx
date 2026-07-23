@@ -2,23 +2,30 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, EditIcon, IconBtn, useToast, Toast } from '../../components/common'
-import { useDataStore, clsBdg, clsCol, statusBdgCls, statusBdgTxt, totalFee, paidFee, payPct, barCol, isFullPaid } from '../../store/dataStore'
+import { useDataStore, clsBdg, clsCol, statusBdgCls, statusBdgTxt, totalFee, paidFee, payPct, barCol } from '../../store/dataStore'
 import type { FeeItemKey } from '../../types'
 
 const GRADES = ['초등 1','초등 2','초등 3','초등 4','초등 5','초등 6','중등 1','중등 2','중등 3','고등 1','고등 2','고등 3']
 
-/* ─── 학생 상세 ─────────────────────────────────────── */
+function normalizePhone(v: string) {
+  return v.replace(/[^\d]/g, '')
+}
+
+function isValidPhone(v: string) {
+  const digits = normalizePhone(v)
+  return digits.length >= 10 && digits.length <= 11
+}
+
 export function StudentDetailPage() {
-  const { pid, sid } = useParams()
+  const { sid } = useParams()
   const navigate = useNavigate()
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const updateFee = useDataStore((s) => s.updateFee)
   const deleteStudent = useDataStore((s) => s.deleteStudent)
   const { ref: toastRef, show: showToast } = useToast()
   const [deleting, setDeleting] = useState(false)
-  const p = parents.find((x) => x.pid === Number(pid))
-  const s = p?.students.find((x) => x.sid === Number(sid))
-  if (!p || !s) return <div className="sec">학생을 찾을 수 없습니다.</div>
+  const s = students.find((x) => x.sid === Number(sid))
+  if (!s) return <div className="sec">학생을 찾을 수 없습니다.</div>
 
   const handleDelete = async () => {
     if (!window.confirm(
@@ -28,7 +35,7 @@ export function StudentDetailPage() {
     try {
       await deleteStudent(s.sid)
       showToast('학생이 삭제되었습니다.')
-      navigate(`/parents/${p.pid}`)
+      navigate('/parents')
     } catch (e: unknown) {
       const err = e as { response?: { data?: { message?: string } }; message?: string }
       alert(err?.response?.data?.message ?? err?.message ?? '삭제에 실패했습니다.')
@@ -47,16 +54,15 @@ export function StudentDetailPage() {
       <TopBar
         title={s.name}
         sub={`${s.cls} · ${s.grade}`}
-        onBack={() => navigate(`/parents/${p.pid}`)}
+        onBack={() => navigate('/parents')}
         right={
-          <IconBtn onClick={() => navigate(`/parents/${p.pid}/student/${s.sid}/edit`)}>
+          <IconBtn onClick={() => navigate(`/parents/${s.sid}/edit`)}>
             <EditIcon />
           </IconBtn>
         }
       />
       <Breadcrumb items={[
-        { label: '학부모 목록', onClick: () => navigate('/parents') },
-        { label: p.name, onClick: () => navigate(`/parents/${p.pid}`) },
+        { label: '학생 관리', onClick: () => navigate('/parents') },
         { label: s.name },
       ]} />
 
@@ -66,7 +72,7 @@ export function StudentDetailPage() {
             <Avatar name={s.name} col={cc.bg} tc={cc.tc} large />
             <div>
               <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--navy)' }}>{s.name}</div>
-              <div style={{ fontSize: 13, color: 'var(--slate2)', marginTop: 2 }}>{p.name} 자녀</div>
+              <div style={{ fontSize: 13, color: 'var(--slate2)', marginTop: 2 }}>학부모 {s.parentName}</div>
               <div style={{ marginTop: 6, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                 <Badge cls={clsBdg(s.cls)}>{s.cls}</Badge>
                 <Badge cls="badge-green">{s.status}</Badge>
@@ -80,7 +86,10 @@ export function StudentDetailPage() {
           <div className="sec-title">학생 정보</div>
           <div className="card">
             <div className="field-row"><span className="field-label">학년</span><span className="field-value">{s.grade}</span></div>
-            <div className="field-row"><span className="field-label">생년월일</span><span className="field-value">{s.birth}</span></div>
+            <div className="field-row"><span className="field-label">생년월일</span><span className="field-value">{s.birth || '-'}</span></div>
+            <div className="field-row"><span className="field-label">학생 연락처</span><span className="field-value">{s.phone || '미등록'}</span></div>
+            <div className="field-row"><span className="field-label">학부모</span><span className="field-value">{s.parentName}</span></div>
+            <div className="field-row"><span className="field-label">학부모 연락처</span><span className="field-value" style={{ color: 'var(--acc)' }}>{s.parentPhone}</span></div>
             <div className="field-row">
               <span className="field-label">소속 반</span>
               <Badge cls={clsBdg(s.cls)}>{s.cls}</Badge>
@@ -126,10 +135,7 @@ export function StudentDetailPage() {
         </div>
 
         <div className="sec">
-          <button
-            className="btn-secondary"
-            onClick={() => navigate(`/parents/${p.pid}/student/${s.sid}/edit`)}
-          >
+          <button className="btn-secondary" onClick={() => navigate(`/parents/${s.sid}/edit`)}>
             학생 정보 수정
           </button>
           <button
@@ -148,99 +154,130 @@ export function StudentDetailPage() {
   )
 }
 
-/* ─── 학생 추가/수정 폼 ─────────────────────────────── */
 export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
-  const { pid, sid } = useParams()
+  const { sid, cid: classCidParam } = useParams()
   const navigate = useNavigate()
-  const parents = useDataStore((s) => s.parents)
-  const classes = useDataStore((s) => s.classes)   // 동적 반 목록
-  const addStudent = useDataStore((s) => s.addStudent)
+  const students = useDataStore((s) => s.students)
+  const classes = useDataStore((s) => s.classes)
+  const createStudent = useDataStore((s) => s.createStudent)
 
-  const p = parents.find((x) => x.pid === Number(pid))
-  const s = mode === 'edit' ? p?.students.find((x) => x.sid === Number(sid)) : undefined
+  const s = mode === 'edit' ? students.find((x) => x.sid === Number(sid)) : undefined
+  const fixedClass = classCidParam
+    ? classes.find((c) => c.cid === Number(classCidParam))
+    : undefined
+  const defaultCls = s?.cls ?? fixedClass?.name ?? (classes[0]?.name ?? 'A반')
+  const classLocked = mode === 'add' && !!fixedClass
 
-  // 반 선택 시 해당 반의 수업료·교재비 자동 채우기
-  const defaultCls = s?.cls ?? (classes[0]?.name ?? 'A반')
-  const defaultClsData = classes.find((c) => c.name === defaultCls)
-
+  const [parentName, setParentName] = useState(s?.parentName ?? '')
+  const [parentPhone, setParentPhone] = useState(s?.parentPhone ?? '')
   const [name, setName] = useState(s?.name ?? '')
   const [birth, setBirth] = useState(s?.birth ?? '')
   const [grade, setGrade] = useState(s?.grade ?? '초등 6')
   const [cls, setCls] = useState(defaultCls)
+  const [phone, setPhone] = useState(s?.phone ?? '')
   const [status, setStatus] = useState<'재원' | '휴원' | '퇴원'>(s?.status ?? '재원')
-  const [tuition, setTuition] = useState(String(s?.fees.tuition.amount ?? defaultClsData?.tuitionFee ?? 280000))
-  const [book, setBook] = useState(String(s?.fees.book.amount ?? defaultClsData?.bookFee ?? 45000))
-
-  // 반 변경 시 해당 반의 기본 수업료·교재비 자동 반영
-  const handleClsChange = (newCls: string) => {
-    setCls(newCls)
-    const clsData = classes.find((c) => c.name === newCls)
-    if (clsData && mode === 'add') {
-      setTuition(String(clsData.tuitionFee))
-      setBook(String(clsData.bookFee))
-    }
-  }
+  const [kakaoVal, setKakaoVal] = useState(s?.kakao ?? true)
 
   const handleSubmit = async () => {
+    if (!parentName.trim()) { alert('학부모 이름을 입력하세요.'); return }
+    if (!parentPhone.trim()) { alert('학부모 전화번호를 입력하세요.'); return }
+    if (!isValidPhone(parentPhone)) {
+      alert('학부모 전화번호는 10~11자리 숫자로 입력해 주세요.')
+      return
+    }
     if (!name.trim()) { alert('학생 이름을 입력하세요.'); return }
-    if (mode === 'add' && p) {
-      const clsData = classes.find((c) => c.name === cls)
+    if (phone.trim() && !isValidPhone(phone)) {
+      alert('학생 연락처는 10~11자리 숫자로 입력해 주세요.')
+      return
+    }
+    if (mode === 'add') {
+      const clsData = fixedClass ?? classes.find((c) => c.name === cls)
       if (!clsData) {
         alert('반 정보를 찾을 수 없습니다. 반을 다시 선택해주세요.')
         return
       }
       try {
-        await addStudent(p.pid, {
+        await createStudent({
+          parentName: parentName.trim(),
+          parentPhone: parentPhone.trim(),
           name: name.trim(),
           grade,
           classroomId: clsData.cid,
           status,
+          phone: phone.trim() || undefined,
+          birthDate: birth.trim() || undefined,
+          loginPhone: parentPhone.trim(),
+          loginPassword: '0000',
+          kakaoLinked: kakaoVal,
         })
-      } catch (e: any) {
-        const msg = e?.response?.data?.message ?? '학생 추가에 실패했습니다.'
-        alert(msg)
+      } catch (e: unknown) {
+        const err = e as { response?: { data?: { message?: string } }; message?: string }
+        alert(err?.response?.data?.message ?? err?.message ?? '학생 등록에 실패했습니다.')
         return
       }
+    } else {
+      alert('수정 기능은 아직 준비 중입니다.')
+      return
     }
-    alert(mode === 'add' ? '학생이 추가되었습니다.' : '저장되었습니다.')
-    navigate(`/parents/${pid}`)
+    alert(mode === 'add' ? '학생이 등록되었습니다.' : '저장되었습니다.')
+    if (fixedClass) {
+      navigate(`/class/${fixedClass.cid}`, { state: { tabIdx: 1 } })
+    } else {
+      navigate('/parents')
+    }
   }
 
-  const title = mode === 'add' ? '학생 추가' : '학생 수정'
+  const title = mode === 'add' ? '학생 등록' : '학생 수정'
+  const cancelPath = mode === 'add'
+    ? (fixedClass ? `/class/${fixedClass.cid}` : '/parents')
+    : `/parents/${sid}`
 
   return (
     <>
       <TopBar
         title={title}
-        sub={p?.name}
-        onBack={() =>
-          navigate(mode === 'add' ? `/parents/${pid}` : `/parents/${pid}/student/${sid}`)
-        }
+        sub={mode === 'add' ? (fixedClass ? fixedClass.name : '신규') : s?.name}
+        onBack={() => navigate(cancelPath, fixedClass ? { state: { tabIdx: 1 } } : undefined)}
       />
       <Breadcrumb items={[
-        { label: '학부모 목록', onClick: () => navigate('/parents') },
-        { label: p?.name ?? '', onClick: () => navigate(`/parents/${pid}`) },
-        ...(mode === 'edit' && s ? [{ label: s.name, onClick: () => navigate(`/parents/${pid}/student/${sid}`) }] : []),
+        ...(fixedClass
+          ? [
+              { label: '클래스 관리', onClick: () => navigate('/class') },
+              { label: fixedClass.name, onClick: () => navigate(`/class/${fixedClass.cid}`, { state: { tabIdx: 1 } }) },
+            ]
+          : [{ label: '학생 관리', onClick: () => navigate('/parents') }]),
+        ...(mode === 'edit' && s ? [{ label: s.name, onClick: () => navigate(`/parents/${sid}`) }] : []),
         { label: title },
       ]} />
 
       <div className="page-content-body">
         <div className="sec">
-          {mode === 'add' && (
-            <>
-              <label className="input-label">학부모</label>
-              <select className="input-field" defaultValue={p?.pid}>
-                {parents.map((par) => (
-                  <option key={par.pid} value={par.pid}>
-                    {par.name} ({par.phone})
-                  </option>
-                ))}
-              </select>
-            </>
-          )}
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)', marginBottom: 12 }}>학부모 정보</div>
 
-          <label className="input-label">학생 이름</label>
-          <input className="input-field" placeholder="예) 김민서" value={name} onChange={(e) => setName(e.target.value)} />
+          <label className="input-label">학부모 이름 <span style={{ color: 'var(--err)' }}>*</span></label>
+          <input className="input-field" placeholder="홍길동" value={parentName} onChange={(e) => setParentName(e.target.value)} required />
+
+          <label className="input-label">학부모 전화번호 <span style={{ color: 'var(--err)' }}>*</span></label>
+          <input className="input-field" type="tel" placeholder="010-0000-0000" value={parentPhone} onChange={(e) => setParentPhone(e.target.value)} required />
+
+          <label className="input-label">카카오톡 연동</label>
+          <select
+            className="input-field"
+            value={kakaoVal ? '연동 요청 발송' : '미연동'}
+            onChange={(e) => setKakaoVal(e.target.value !== '미연동')}
+          >
+            <option>연동 요청 발송</option>
+            <option>미연동</option>
+          </select>
+
+          <div className="divider" />
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)', marginBottom: 12 }}>학생 정보</div>
+
+          <label className="input-label">학생 이름 <span style={{ color: 'var(--err)' }}>*</span></label>
+          <input className="input-field" placeholder="예) 김민서" value={name} onChange={(e) => setName(e.target.value)} required />
+
+          <label className="input-label">학생 연락처 (선택)</label>
+          <input className="input-field" type="tel" placeholder="010-0000-0000" value={phone} onChange={(e) => setPhone(e.target.value)} />
 
           <label className="input-label">생년월일</label>
           <input className="input-field" placeholder="2012-03-15" value={birth} onChange={(e) => setBirth(e.target.value)} />
@@ -251,9 +288,13 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
           </select>
 
           <label className="input-label">반 배정</label>
-          <select className="input-field" value={cls} onChange={(e) => handleClsChange(e.target.value)}>
-            {classes.map((c) => <option key={c.cid} value={c.name}>{c.name} ({c.subject})</option>)}
-          </select>
+          {classLocked && fixedClass ? (
+            <input className="input-field" value={`${fixedClass.name} (${fixedClass.subject})`} readOnly />
+          ) : (
+            <select className="input-field" value={cls} onChange={(e) => setCls(e.target.value)}>
+              {classes.map((c) => <option key={c.cid} value={c.name}>{c.name} ({c.subject})</option>)}
+            </select>
+          )}
 
           {mode === 'edit' && (
             <>
@@ -266,21 +307,10 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
             </>
           )}
 
-          <label className="input-label">월 수업료 (원)</label>
-          <input className="input-field" type="number" value={tuition} onChange={(e) => setTuition(e.target.value)} />
-
-          <label className="input-label">월 교재비 (원)</label>
-          <input className="input-field" type="number" value={book} onChange={(e) => setBook(e.target.value)} />
-
-          <button className="btn-primary" onClick={handleSubmit}>
-            {mode === 'add' ? '추가 완료' : '저장'}
+          <button className="btn-primary" onClick={() => void handleSubmit()}>
+            {mode === 'add' ? '등록 완료' : '저장'}
           </button>
-          <button
-            className="btn-secondary"
-            onClick={() =>
-              navigate(mode === 'add' ? `/parents/${pid}` : `/parents/${pid}/student/${sid}`)
-            }
-          >
+          <button className="btn-secondary" onClick={() => navigate(cancelPath, fixedClass ? { state: { tabIdx: 1 } } : undefined)}>
             취소
           </button>
         </div>
@@ -289,143 +319,6 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
   )
 }
 
-/* ─── 학부모 등록/수정 폼 ─────────────────────────────── */
 export function ParentFormPage({ mode }: { mode: 'add' | 'edit' }) {
-  const { pid } = useParams()
-  const navigate = useNavigate()
-  const parents = useDataStore((s) => s.parents)
-  const classes = useDataStore((s) => s.classes)
-  const addParent = useDataStore((s) => s.addParent)
-  const addStudent = useDataStore((s) => s.addStudent)
-  const p = mode === 'edit' ? parents.find((x) => x.pid === Number(pid)) : undefined
-
-  const [name, setName] = useState(p?.name ?? '')
-  const [phone, setPhone] = useState(p?.phone ?? '')
-  const [kakaoVal, setKakaoVal] = useState(p?.kakao ?? true)
-  const [stuName, setStuName] = useState('')
-  const [stuGrade, setStuGrade] = useState('선택 안함')
-  const [stuCls, setStuCls] = useState('선택 안함')
-
-  const title = mode === 'add' ? '학부모 등록' : '학부모 수정'
-
-  const handleSubmit = async () => {
-    if (mode !== 'add') {
-      alert('수정 기능은 아직 준비 중입니다.')
-      return
-    }
-    if (!name.trim()) {
-      alert('학부모 이름을 입력해주세요.')
-      return
-    }
-    if (!phone.trim()) {
-      alert('전화번호를 입력해주세요.')
-      return
-    }
-
-    try {
-      await addParent({
-        name: name.trim(),
-        phone: phone.trim(),
-        loginPhone: phone.trim(),
-        loginPassword: '0000',
-      })
-
-      // 첫 번째 학생 등록이 입력된 경우에만 추가 등록
-      if (stuName.trim() && stuGrade !== '선택 안함' && stuCls !== '선택 안함') {
-        const latestParent = useDataStore.getState().parents[0]
-        const cls = classes.find((c) => c.name === stuCls)
-        if (latestParent && cls) {
-          await addStudent(latestParent.pid, {
-            name: stuName.trim(),
-            grade: stuGrade,
-            classroomId: cls.cid,
-            status: '재원',
-          })
-        }
-      }
-
-      alert('등록되었습니다.')
-      navigate('/parents')
-    } catch (e: any) {
-      const msg = e?.response?.data?.message ?? '학부모 등록에 실패했습니다.'
-      alert(msg)
-    }
-  }
-
-  return (
-    <>
-      <TopBar
-        title={title}
-        sub={mode === 'add' ? '신규' : p?.name}
-        onBack={() => navigate(mode === 'add' ? '/parents' : `/parents/${pid}`)}
-      />
-      <Breadcrumb items={[
-        { label: '학부모 목록', onClick: () => navigate('/parents') },
-        ...(mode === 'edit' && p ? [{ label: p.name, onClick: () => navigate(`/parents/${pid}`) }] : []),
-        { label: title },
-      ]} />
-
-      <div className="page-content-body">
-        <div className="sec">
-          <label className="input-label">학부모 이름</label>
-          <input className="input-field" placeholder="홍길동" value={name} onChange={(e) => setName(e.target.value)} />
-
-          <label className="input-label">전화번호</label>
-          <input className="input-field" type="tel" placeholder="010-0000-0000" value={phone} onChange={(e) => setPhone(e.target.value)} />
-
-          <label className="input-label">카카오톡 연동</label>
-          <select
-            className="input-field"
-            value={kakaoVal ? '연동 요청 발송' : '미연동'}
-            onChange={(e) => setKakaoVal(e.target.value !== '미연동')}
-          >
-            <option>연동 요청 발송</option>
-            <option>미연동</option>
-          </select>
-
-          {mode === 'add' && (
-            <>
-              <div className="divider" />
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)', marginBottom: 12 }}>
-                첫 번째 학생 등록 (선택)
-              </div>
-
-              <label className="input-label">학생 이름</label>
-              <input className="input-field" placeholder="홍민서" value={stuName} onChange={(e) => setStuName(e.target.value)} />
-
-              <label className="input-label">학년</label>
-              <select className="input-field" value={stuGrade} onChange={(e) => setStuGrade(e.target.value)}>
-                <option>선택 안함</option>
-                {GRADES.map((g) => <option key={g}>{g}</option>)}
-              </select>
-
-              <label className="input-label">반 배정</label>
-              <select className="input-field" value={stuCls} onChange={(e) => setStuCls(e.target.value)}>
-                <option value="선택 안함">선택 안함</option>
-                {classes.map((c) => <option key={c.cid} value={c.name}>{c.name} ({c.subject})</option>)}
-              </select>
-            </>
-          )}
-
-          <button
-            className="btn-primary"
-            onClick={handleSubmit}
-          >
-            {mode === 'add' ? '등록 완료' : '저장'}
-          </button>
-          {mode === 'edit' && (
-            <button className="btn-danger" onClick={() => alert('삭제 확인')}>
-              학부모 삭제
-            </button>
-          )}
-          <button
-            className="btn-secondary"
-            onClick={() => navigate(mode === 'add' ? '/parents' : `/parents/${pid}`)}
-          >
-            취소
-          </button>
-        </div>
-      </div>
-    </>
-  )
+  return <StudentFormPage mode={mode} />
 }

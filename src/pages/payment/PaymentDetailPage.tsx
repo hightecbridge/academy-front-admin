@@ -5,25 +5,18 @@ import FeePaymentRow from '../../components/payment/FeePaymentRow'
 import { useDataStore, clsBdg, statusBdgCls, statusBdgTxt, totalFee, paidFee, payPct, barCol, isFullPaid } from '../../store/dataStore'
 import { formatPaidMeta } from '../../utils/feePayment'
 import { formatYearMonthLabel } from '../../utils/paymentMonth'
-import type { FeeItemKey, Parent, Student } from '../../types'
+import type { FeeItemKey, Student } from '../../types'
 
 export default function PaymentDetailPage() {
   const { sid } = useParams()
   const navigate = useNavigate()
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const paymentYearMonth = useDataStore((s) => s.paymentYearMonth)
   const updateFee = useDataStore((s) => s.updateFee)
   const { ref: toastRef, show: showToast } = useToast()
 
-  let s: Student | null = null
-  let p: Parent | null = null
-  parents.forEach((par) => par.students.forEach((st) => {
-    if (st.sid === Number(sid)) { s = st; p = par }
-  }))
-  if (!s || !p) return <div className="sec">수납 정보를 찾을 수 없습니다.</div>
-
-  const student = s as Student
-  const parent = p as Parent
+  const student = students.find((st) => st.sid === Number(sid)) ?? null
+  if (!student) return <div className="sec">수납 정보를 찾을 수 없습니다.</div>
   const total = totalFee(student)
   const paid2 = paidFee(student)
   const remain = total - paid2
@@ -53,7 +46,7 @@ export default function PaymentDetailPage() {
         sub={`${formatYearMonthLabel(paymentYearMonth)} · ${student.cls} · ${student.grade}`}
         onBack={() => navigate('/payment')}
         right={
-          <IconBtn onClick={() => navigate(`/parents/${parent.pid}/student/${student.sid}/edit`)}>
+          <IconBtn onClick={() => navigate(`/parents/${student.sid}/edit`)}>
             <EditIcon />
           </IconBtn>
         }
@@ -67,10 +60,10 @@ export default function PaymentDetailPage() {
 
         <div className="sec">
           <div className="hero-card">
-            <Avatar name={parent.name} col={parent.col} tc={parent.tc} large />
+            <Avatar name={student.parentName} col={student.col} tc={student.tc} large />
             <div>
               <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--navy)' }}>{student.name}</div>
-              <div style={{ fontSize: 13, color: 'var(--slate2)', marginTop: 2 }}>{parent.name} · {student.grade}</div>
+              <div style={{ fontSize: 13, color: 'var(--slate2)', marginTop: 2 }}>{student.parentName} · {student.grade}</div>
               <div style={{ marginTop: 6, display: 'flex', gap: 5 }}>
                 <Badge cls={clsBdg(student.cls)}>{student.cls}</Badge>
                 <Badge cls={statusBdgCls(student)}>{statusBdgTxt(student)}</Badge>

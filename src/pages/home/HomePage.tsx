@@ -1,18 +1,16 @@
 // src/pages/home/HomePage.tsx
 import { useNavigate } from 'react-router-dom'
 import { TopBar, Avatar, Badge, ProgBar } from '../../components/common'
-import { useDataStore, totalFee, paidFee, isFullPaid } from '../../store/dataStore'
+import { useDataStore, totalFee, paidFee, isFullPaid, studentInClass } from '../../store/dataStore'
 
 export default function HomePage() {
   const navigate = useNavigate()
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const classes = useDataStore((s) => s.classes)
   const attendSheets = useDataStore((s) => s.attendSheets)
   const events = useDataStore((s) => s.events)
 
-  const allStudents = parents.flatMap((p) =>
-    p.students.map((s) => ({ ...s, pid: p.pid, pname: p.name, pcol: p.col, ptc: p.tc }))
-  )
+  const allStudents = students
   const tAmt = allStudents.reduce((a, s) => a + totalFee(s), 0)
   const pAmt = allStudents.reduce((a, s) => a + paidFee(s), 0)
   const unpaidCnt = allStudents.filter((s) => !isFullPaid(s)).length
@@ -34,7 +32,7 @@ export default function HomePage() {
   const DAY = ['일', '월', '화', '수', '목', '금', '토']
 
   const classStats = classes.map((cls) => {
-    const cs = allStudents.filter((s) => s.cls === cls.name)
+    const cs = allStudents.filter((s) => studentInClass(s, cls))
     const cp = cs.reduce((a, s) => a + paidFee(s), 0)
     const ct = cs.reduce((a, s) => a + totalFee(s), 0)
     return {
@@ -44,9 +42,9 @@ export default function HomePage() {
   })
 
   const consultations = [
-    { pid: 1, name: '김지원', cls: 'A반', time: '3/20 오후 2시' },
-    { pid: 2, name: '박영수', cls: 'B반', time: '3/18 오전 10시' },
-    { pid: 3, name: '이수현', cls: 'C반', time: '3/22 오후 4시' },
+    { sid: 1, name: '김지원', cls: 'A반', time: '3/20 오후 2시' },
+    { sid: 2, name: '박영수', cls: 'B반', time: '3/18 오전 10시' },
+    { sid: 3, name: '이수현', cls: 'C반', time: '3/22 오후 4시' },
   ]
 
   return (
@@ -87,8 +85,8 @@ export default function HomePage() {
               <div className="stat-sub">{todayTotal > 0 ? `${todayPresent}/${todayTotal}명` : '미등록'}</div>
             </div>
             <div className="stat-card">
-              <div className="stat-label">학부모 수</div>
-              <div className="stat-value">{parents.length}</div>
+              <div className="stat-label">등록 학생</div>
+              <div className="stat-value">{allStudents.length}</div>
               <div className="stat-sub">등록</div>
             </div>
           </div>
@@ -124,11 +122,11 @@ export default function HomePage() {
             <div className="sec-title">최근 상담 신청</div>
             <div className="card">
               {consultations.map((c) => {
-                const p = parents.find((x) => x.pid === c.pid)
-                if (!p) return null
+                const stu = students.find((x) => x.sid === c.sid)
+                if (!stu) return null
                 return (
-                  <div key={c.pid} className="list-row" onClick={() => navigate(`/parents/${c.pid}`)}>
-                    <Avatar name={p.name} col={p.col} tc={p.tc} />
+                  <div key={c.sid} className="list-row" onClick={() => navigate(`/parents/${c.sid}`)}>
+                    <Avatar name={stu.parentName} col={stu.col} tc={stu.tc} />
                     <div style={{ flex: 1 }}>
                       <div className="row">
                         <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{c.name}</span>

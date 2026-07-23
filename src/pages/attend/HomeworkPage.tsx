@@ -22,7 +22,7 @@ export default function HomeworkPage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const deepLinkRef = useRef<{ cid?: string; date?: string } | null>(null)
   const classes    = useDataStore((s) => s.classes)
-  const parents    = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const homeworkSheets = useDataStore((s) => s.homeworkSheets)
   const saveHomeworkSheet   = useDataStore((s) => s.saveHomeworkSheet)
   const deleteHomeworkSheet = useDataStore((s) => s.deleteHomeworkSheet)
@@ -37,7 +37,7 @@ export default function HomeworkPage() {
   const [editSheetId, setEditSheetId] = useState<string | null>(null)
   const [sheetSearch, setSheetSearch] = useState('')
 
-  const allStudents = parents.flatMap((p) => p.students)
+  const allStudents = students
   const tabs = classes.map((c) => c.name)
   const currentCls = classes[tabIdx]
 

@@ -4,14 +4,21 @@ import { useDataStore, isFullPaid } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
 import client from '../../api/client'
 
+type UnpaidGuardian = {
+  key: string
+  name: string
+  phone: string
+  studentLabels: string[]
+}
+
 export default function PaymentMessagePage() {
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const senderNumbers = useDataStore((s) => s.senderNumbers)
   const fetchSenderNumbers = useDataStore((s) => s.fetchSenderNumbers)
   const saveMessageSendLog = useDataStore((s) => s.saveMessageSendLog)
   const { ref: toastRef, show: showToast } = useToast()
   const user = useAuthStore((s) => s.user)
-  const [selectedParentIds, setSelectedParentIds] = useState<Set<number>>(new Set())
+  const [selectedParentKeys, setSelectedParentKeys] = useState<Set<string>>(new Set())
   const [message, setMessage] = useState('안녕하세요. 결제 예정 내역이 있어 안내드립니다. 자세한 금액은 학원으로 문의 부탁드립니다.')
   const [sending, setSending] = useState(false)
   const [currentPoints, setCurrentPoints] = useState(0)
@@ -25,11 +32,21 @@ export default function PaymentMessagePage() {
   const defaultSenderId = senderOptions.find((s) => s.isDefault)?.id ?? senderOptions[0]?.id ?? 0
   const [selectedSenderId, setSelectedSenderId] = useState<number>(defaultSenderId)
 
-  const unpaidParents = useMemo(() => {
-    return parents.filter((p) => p.students.some((s) => !isFullPaid(s)))
-  }, [parents])
+  const unpaidParents = useMemo((): UnpaidGuardian[] => {
+    const map = new Map<string, UnpaidGuardian>()
+    for (const s of students) {
+      if (isFullPaid(s)) continue
+      const key = s.parentPhone.replace(/[^\d]/g, '')
+      if (!key) continue
+      const label = `${s.name}(${s.cls})`
+      const existing = map.get(key)
+      if (existing) existing.studentLabels.push(label)
+      else map.set(key, { key, name: s.parentName, phone: s.parentPhone, studentLabels: [label] })
+    }
+    return Array.from(map.values())
+  }, [students])
 
-  const selectedTargets = unpaidParents.filter((p) => selectedParentIds.has(p.pid))
+  const selectedTargets = unpaidParents.filter((p) => selectedParentKeys.has(p.key))
   const recipientPhones = Array.from(
     new Set(
       selectedTargets
@@ -62,17 +79,17 @@ export default function PaymentMessagePage() {
     }
   }, [senderOptions, selectedSenderId, defaultSenderId])
 
-  const toggleParent = (pid: number) => {
-    setSelectedParentIds((prev) => {
+  const toggleParent = (key: string) => {
+    setSelectedParentKeys((prev) => {
       const next = new Set(prev)
-      if (next.has(pid)) next.delete(pid)
-      else next.add(pid)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
       return next
     })
   }
 
-  const selectAll = () => setSelectedParentIds(new Set(unpaidParents.map((p) => p.pid)))
-  const clearAll = () => setSelectedParentIds(new Set())
+  const selectAll = () => setSelectedParentKeys(new Set(unpaidParents.map((p) => p.key)))
+  const clearAll = () => setSelectedParentKeys(new Set())
 
   const senderNo = senderOptions.find((s) => s.id === selectedSenderId)?.number.replace(/[^\d]/g, '') ?? ''
 
@@ -183,13 +200,13 @@ export default function PaymentMessagePage() {
           </div>
           <div className="card">
             {unpaidParents.map((p) => {
-              const checked = selectedParentIds.has(p.pid)
+              const checked = selectedParentKeys.has(p.key)
               return (
-                <label key={p.pid} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
-                  <input type="checkbox" checked={checked} onChange={() => toggleParent(p.pid)} />
+                <label key={p.key} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid var(--border)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={checked} onChange={() => toggleParent(p.key)} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>{p.name}</div>
-                    <div style={{ fontSize: 12, color: 'var(--slate2)' }}>{p.phone}</div>
+                    <div style={{ fontSize: 12, color: 'var(--slate2)' }}>{p.phone} · {p.studentLabels.join(', ')}</div>
                   </div>
                 </label>
               )

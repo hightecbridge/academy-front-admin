@@ -1,13 +1,13 @@
 // src/pages/class/ClassListPage.tsx
 import { useNavigate } from 'react-router-dom'
-import { TopBar, Fab, ProgBar } from '../../components/common'
-import { useDataStore, totalFee, paidFee, studentInClass } from '../../store/dataStore'
+import { TopBar, Fab } from '../../components/common'
+import { useDataStore, studentInClass } from '../../store/dataStore'
 
 export default function ClassListPage() {
   const navigate = useNavigate()
   const classes = useDataStore((s) => s.classes)
-  const parents = useDataStore((s) => s.parents)
-  const allStudents = parents.flatMap((p) => p.students)
+  const students = useDataStore((s) => s.students)
+  const allStudents = students
 
   return (
     <>
@@ -49,11 +49,6 @@ export default function ClassListPage() {
           )}
           {classes.map((cls) => {
             const stuInClass = allStudents.filter((s) => studentInClass(s, cls))
-            const paidAmt = stuInClass.reduce((a, s) => a + paidFee(s), 0)
-            const totalAmt = stuInClass.reduce((a, s) => a + totalFee(s), 0)
-            const payPct = totalAmt > 0 ? Math.round((paidAmt / totalAmt) * 100) : 0
-            const occupancy = cls.capacity > 0 ? Math.round((stuInClass.length / cls.capacity) * 100) : 0
-            const payCol = payPct >= 90 ? 'var(--ok)' : payPct >= 70 ? 'var(--warn)' : 'var(--err)'
 
             return (
               <div key={cls.cid} className="card" style={{ marginBottom: 12, cursor: 'pointer' }} onClick={() => navigate(`/class/${cls.cid}`)}>
@@ -93,22 +88,6 @@ export default function ClassListPage() {
                       </div>
                     ))}
                   </div>
-                  <div style={{ marginBottom: 8 }}>
-                    <div className="row" style={{ marginBottom: 4 }}>
-                      <span style={{ fontSize: 11, color: 'var(--slate3)' }}>정원 현황</span>
-                      <span style={{ fontSize: 11, color: 'var(--slate2)' }}>{stuInClass.length}/{cls.capacity}명 ({occupancy}%)</span>
-                    </div>
-                    <ProgBar pct={occupancy} color={occupancy >= 90 ? 'var(--err)' : occupancy >= 70 ? 'var(--warn)' : 'var(--ok)'} />
-                  </div>
-                  {stuInClass.length > 0 && (
-                    <div>
-                      <div className="row" style={{ marginBottom: 4 }}>
-                        <span style={{ fontSize: 11, color: 'var(--slate3)' }}>이번달 수납률</span>
-                        <span style={{ fontSize: 11, fontWeight: 600, color: payCol }}>{payPct}%</span>
-                      </div>
-                      <ProgBar pct={payPct} color={payCol} />
-                    </div>
-                  )}
                 </div>
 
                 {/* 액션 */}

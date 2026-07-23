@@ -2,17 +2,17 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, TabBar, Fab, ProgBar } from '../../components/common'
-import { useDataStore } from '../../store/dataStore'
+import { useDataStore, studentInClass } from '../../store/dataStore'
 
 export default function AttendListPage() {
   const navigate = useNavigate()
   const classes = useDataStore((s) => s.classes)
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const attendSheets = useDataStore((s) => s.attendSheets)
   const fetchAttend = useDataStore((s) => s.fetchAttend)
   const [tabIdx, setTabIdx] = useState(0)
 
-  const allStudents = parents.flatMap((p) => p.students)
+  const allStudents = students
   const tabs = classes.map((c) => c.name)
   const currentCls = classes[tabIdx]
 
@@ -42,7 +42,7 @@ export default function AttendListPage() {
     )
   }
 
-  const stuInClass = allStudents.filter((s) => s.cls === currentCls.name)
+  const stuInClass = allStudents.filter((s) => studentInClass(s, currentCls))
   const sheetsForClass = attendSheets
     .filter((sh) => sh.cid === currentCls.cid)
     .sort((a, b) => b.date.localeCompare(a.date))

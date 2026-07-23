@@ -18,8 +18,10 @@ type NavItem = {
 const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   { label: '관리', items: [
     { path: '/',         label: '홈',      icon: 'grid' },
-    { path: '/parents',  label: '학부모',   icon: 'people' },
+    { path: '/parents',  label: '학생관리',   icon: 'people' },
     { path: '/class',    label: '클래스',   icon: 'book' },
+    { path: '/notice',   label: '공지사항', icon: 'doc' },
+    { path: '/message',  label: '메시지',   icon: 'msg', badge: true },
     { path: '/attend',   label: '출석',    icon: 'check' },
     { path: '/homework', label: '숙제관리', icon: 'hw' },
   ]},
@@ -27,8 +29,6 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
     { path: '/calendar', label: '캘린더',   icon: 'cal' },
     { path: '/payment',  label: '수납',    icon: 'money' },
     { path: '/payment-message', label: '결제메시지', mobileLabel: '결제문자', icon: 'receipt' },
-    { path: '/notice',   label: '공지사항', icon: 'doc' },
-    { path: '/message',  label: '메시지',   icon: 'msg', badge: true },
   ]},
   { label: '계정', items: [
     { path: '/billing',  label: '이용요금관리', mobileLabel: '이용요금', icon: 'wallet' },
@@ -70,7 +70,7 @@ export default function Layout({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
   const { user, logout } = useAuthStore()
   const billingLocked = useBillingAccessStore((s) => s.paymentRequired)
-  const { fetchClasses, fetchParents, fetchNotices, fetchEvents } = useDataStore()
+  const { fetchClasses, fetchStudents, fetchNotices, fetchEvents } = useDataStore()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
 
   const goNav = (path: string) => {
@@ -94,10 +94,10 @@ export default function Layout({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (billingLocked) return
     void fetchClasses()
-    void fetchParents()
+    void fetchStudents()
     void fetchNotices()
     void fetchEvents()
-  }, [billingLocked, fetchClasses, fetchParents, fetchNotices, fetchEvents])
+  }, [billingLocked, fetchClasses, fetchStudents, fetchNotices, fetchEvents])
 
   const handleLogout = () => {
     if (window.confirm('로그아웃 하시겠습니까?')) {

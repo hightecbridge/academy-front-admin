@@ -2,11 +2,52 @@
 import React, { useState, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
 import { TopBar, TabBar, Badge, useToast, Toast } from '../../components/common'
-import { useDataStore, isFullPaid } from '../../store/dataStore'
+import { useDataStore, isFullPaid, studentInClass } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
 import { usePointCosts, type MessageCostType } from '../../hooks/usePointCosts'
 import client from '../../api/client'
 import { buildTuitionAlimtalkMessage, TUITION_ALIMTALK_TEMPLATE_CODE } from '../../utils/tuitionAlimtalk'
+
+type MessageRecipient = {
+  key: string
+  name: string
+  phone: string
+  phoneDigits: string
+  col: string
+  tc: string
+  subLabel: string
+}
+
+function recipientsFromStudents(students: {
+  parentName: string
+  parentPhone: string
+  col: string
+  tc: string
+  name: string
+  cls: string
+}[]): MessageRecipient[] {
+  const byKey = new Map<string, MessageRecipient>()
+  for (const s of students) {
+    const phoneDigits = normalizePhone(s.parentPhone)
+    if (!phoneDigits) continue
+    const label = `${s.name}(${s.cls})`
+    const existing = byKey.get(phoneDigits)
+    if (existing) {
+      existing.subLabel = `${existing.subLabel}, ${label}`
+    } else {
+      byKey.set(phoneDigits, {
+        key: phoneDigits,
+        name: s.parentName,
+        phone: s.parentPhone,
+        phoneDigits,
+        col: s.col,
+        tc: s.tc,
+        subLabel: label,
+      })
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+}
 
 function formatSenderPhoneDisplay(digits: string) {
   if (digits.length === 11 && digits.startsWith('010')) {
@@ -19,6 +60,10 @@ function formatSenderPhoneDisplay(digits: string) {
     return `${digits.slice(0, 3)}-${digits.slice(3, 7)}-${digits.slice(7)}`
   }
   return digits
+}
+
+function normalizePhone(v: string) {
+  return v.replace(/[^\d]/g, '')
 }
 
 export default function MessagePage() {
@@ -49,7 +94,7 @@ export default function MessagePage() {
 
   const [msg, setMsg] = useState('')
   const user = useAuthStore((s) => s.user)
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const paymentYearMonth = useDataStore((s) => s.paymentYearMonth)
   const classes = useDataStore((s) => s.classes)
   const messageSends = useDataStore((s) => s.messageSends)
@@ -57,9 +102,7 @@ export default function MessagePage() {
   const saveMessageSendLog = useDataStore((s) => s.saveMessageSendLog)
   const { ref: toastRef, show: showToast } = useToast()
 
-  const allStu = parents.flatMap((p) => p.students.map((s) => ({
-    ...s, pid: p.pid, pname: p.name, pcol: p.col, ptc: p.tc,
-  })))
+  const allStu = students
   const unpaid = allStu.filter((s) => !isFullPaid(s))
 
   const [chips, setChips] = useState<boolean[]>(() => classes.map((_, i) => i === 0))
@@ -72,9 +115,77 @@ export default function MessagePage() {
       return next
     })
   }, [classes])
-  const clsCounts = classes.map((c) => ({ cid: c.cid, name: c.name, n: allStu.filter((s) => s.cls === c.name).length }))
+  const clsCounts = classes.map((c) => ({
+    cid: c.cid,
+    name: c.name,
+    n: allStu.filter((s) => studentInClass(s, c)).length,
+  }))
+  const selectedClassItems = classes.filter((_, i) => chips[i])
   const selectedClasses = clsCounts.filter((_, i) => chips[i])
-  const selectedCount = selectedClasses.reduce((a, c) => a + c.n, 0)
+
+  const buildClassRecipients = React.useCallback((): MessageRecipient[] => {
+    if (selectedClassItems.length === 0) return []
+    const matched = students.filter((s) =>
+      selectedClassItems.some((cls) => studentInClass(s, cls)),
+    )
+    return recipientsFromStudents(matched)
+  }, [students, selectedClassItems])
+
+  const buildAllRecipients = React.useCallback((): MessageRecipient[] => {
+    return recipientsFromStudents(students)
+  }, [students])
+
+  const classRecipients = React.useMemo(() => buildClassRecipients(), [buildClassRecipients])
+  const allRecipients = React.useMemo(() => buildAllRecipients(), [buildAllRecipients])
+  const classRecipientKey = React.useMemo(
+    () => classRecipients.map((r) => r.key).join(','),
+    [classRecipients],
+  )
+  const studentKey = React.useMemo(
+    () => students.map((s) => s.sid).join(','),
+    [students],
+  )
+
+  const [checkedClassParentIds, setCheckedClassParentIds] = useState<Set<string>>(new Set())
+  const [checkedAllParentIds, setCheckedAllParentIds] = useState<Set<string>>(new Set())
+
+  React.useEffect(() => {
+    setCheckedClassParentIds(new Set(classRecipients.map((r) => r.key)))
+  }, [classRecipientKey])
+
+  React.useEffect(() => {
+    setCheckedAllParentIds(new Set(allRecipients.map((r) => r.key)))
+  }, [studentKey, allRecipients])
+
+  const toggleClassParent = (key: string) => {
+    setCheckedClassParentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const toggleAllParent = (key: string) => {
+    setCheckedAllParentIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
+  const selectAllClassParents = () => {
+    setCheckedClassParentIds(new Set(classRecipients.map((r) => r.key)))
+  }
+
+  const clearClassParents = () => setCheckedClassParentIds(new Set())
+
+  const selectAllParents = () => {
+    setCheckedAllParentIds(new Set(allRecipients.map((r) => r.key)))
+  }
+
+  const clearAllParents = () => setCheckedAllParentIds(new Set())
 
   React.useEffect(() => {
     void fetchMessageSends()
@@ -161,8 +272,6 @@ export default function MessagePage() {
     if (t.startsWith(academyPrefix)) return t
     return `${academyPrefix}\n${t}`
   }
-
-  const normalizePhone = (v: string) => v.replace(/[^\d]/g, '')
 
   const uniqueRecipientPhones = (phones: string[]) =>
     Array.from(new Set(phones.map(normalizePhone).filter((p) => p.length > 0)))
@@ -327,17 +436,24 @@ export default function MessagePage() {
     </div>
   )
 
+  const classSelectedRecipients = classRecipients.filter(
+    (r) => checkedClassParentIds.has(r.key) && r.phoneDigits.length > 0,
+  )
+  const allSelectedRecipients = allRecipients.filter(
+    (r) => checkedAllParentIds.has(r.key) && r.phoneDigits.length > 0,
+  )
+
   const classRecipientPhones = uniqueRecipientPhones(
-    parents
-      .filter((p) => selectedClasses.some((c) => allStu.some((s) => s.pid === p.pid && s.cls === c.name)))
-      .map((p) => p.phone),
+    classSelectedRecipients.map((r) => r.phoneDigits),
   )
   const classMessageType = resolveMessageType(withDefaultPrefix(msg), !!imageFile)
   const classPerCost = costByType[classMessageType]
   const classTotalCost = classRecipientPhones.length * classPerCost
   const classInsufficient = classTotalCost > currentPoints
 
-  const allRecipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
+  const allRecipientPhones = uniqueRecipientPhones(
+    allSelectedRecipients.map((r) => r.phoneDigits),
+  )
   const allMessageType = resolveMessageType(withDefaultPrefix(msg), !!imageFile)
   const allPerCost = costByType[allMessageType]
   const allTotalCost = allRecipientPhones.length * allPerCost
@@ -346,14 +462,13 @@ export default function MessagePage() {
   const paymentTargets = unpaid
     .filter((s) => checkedUnpaid.has(s.sid))
     .map((s) => {
-      const parent = parents.find((p) => p.pid === s.pid)
-      const phone = normalizePhone(parent?.phone ?? '')
+      const phone = normalizePhone(s.parentPhone ?? '')
       if (!phone) return null
       const unpaidFees = Object.values(s.fees).filter((f) => !f.paid)
       const amount = unpaidFees.reduce((sum, fee) => sum + (Number(fee.amount) || 0), 0)
       return {
         phone,
-        parentName: s.pname,
+        parentName: s.parentName,
         studentName: s.name,
         amount,
       }
@@ -364,6 +479,96 @@ export default function MessagePage() {
   const paymentTotalCost = paymentRecipientCount * paymentPerCost
   const paymentInsufficient = paymentTotalCost > currentPoints
   const actualMessage = withDefaultPrefix(msg)
+
+  const RecipientPicker = ({
+    recipients,
+    checkedIds,
+    onToggle,
+    onSelectAll,
+    onClearAll,
+    emptyText,
+  }: {
+    recipients: MessageRecipient[]
+    checkedIds: Set<string>
+    onToggle: (key: string) => void
+    onSelectAll: () => void
+    onClearAll: () => void
+    emptyText: string
+  }) => (
+    <div className="sec">
+      <div className="row" style={{ marginBottom: 10 }}>
+        <span className="sec-title" style={{ marginBottom: 0 }}>
+          발송 대상 학부모 ({checkedIds.size}/{recipients.length}명)
+        </span>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button
+            type="button"
+            onClick={onSelectAll}
+            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--ok2)', color: '#027A48', border: 'none', cursor: 'pointer' }}
+          >
+            전체 선택
+          </button>
+          <button
+            type="button"
+            onClick={onClearAll}
+            style={{ fontSize: 11, padding: '4px 10px', borderRadius: 6, background: 'var(--bg2)', color: 'var(--slate2)', border: '1px solid var(--border)', cursor: 'pointer' }}
+          >
+            전체 해제
+          </button>
+        </div>
+      </div>
+      {recipients.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>
+          {emptyText}
+        </div>
+      ) : (
+        <div className="card">
+          {recipients.map((r) => {
+            const checked = checkedIds.has(r.key)
+            const noPhone = r.phoneDigits.length === 0
+            return (
+              <div
+                key={r.key}
+                onClick={() => !noPhone && onToggle(r.key)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '12px 14px',
+                  borderBottom: '1px solid var(--border)',
+                  cursor: noPhone ? 'not-allowed' : 'pointer',
+                  background: checked && !noPhone ? 'var(--acc2)' : 'transparent',
+                  opacity: noPhone ? 0.55 : 1,
+                  transition: 'background .12s',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={checked && !noPhone}
+                  disabled={noPhone}
+                  onChange={() => onToggle(r.key)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ width: 16, height: 16, accentColor: 'var(--acc)', flexShrink: 0 }}
+                />
+                <div className="avatar" style={{ background: r.col, color: r.tc, width: 32, height: 32, fontSize: 12 }}>
+                  {r.name[0]}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row">
+                    <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{r.name}</span>
+                    {noPhone && <Badge cls="badge-red">번호 없음</Badge>}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>
+                    {r.phone || '연락처 미등록'} · {r.subLabel}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
 
   return (
     <>
@@ -397,10 +602,18 @@ export default function MessagePage() {
               {selectedClasses.length > 0 && (
                 <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 8, alignItems: 'center' }}>
                   {selectedClasses.map((c) => <span key={c.cid} className="badge badge-blue">{c.name}</span>)}
-                  <span style={{ fontSize: 12, color: 'var(--acc)' }}>→ 총 {selectedCount}명</span>
+                  <span style={{ fontSize: 12, color: 'var(--acc)' }}>→ 학부모 {classRecipients.length}명</span>
                 </div>
               )}
             </div>
+            <RecipientPicker
+              recipients={classRecipients}
+              checkedIds={checkedClassParentIds}
+              onToggle={toggleClassParent}
+              onSelectAll={selectAllClassParents}
+              onClearAll={clearClassParents}
+              emptyText="선택한 반에 해당하는 학부모가 없습니다"
+            />
             <div className="sec">
               <div
                 className="card"
@@ -442,19 +655,13 @@ export default function MessagePage() {
                 </div>
               )}
               <button className="btn-primary"
-                disabled={selectedCount === 0 || msg.trim().length === 0 || classInsufficient}
-                style={{ opacity: (selectedCount === 0 || msg.trim().length === 0 || classInsufficient) ? 0.5 : 1 }}
+                disabled={classRecipientPhones.length === 0 || msg.trim().length === 0 || classInsufficient}
+                style={{ opacity: (classRecipientPhones.length === 0 || msg.trim().length === 0 || classInsufficient) ? 0.5 : 1 }}
                 onClick={async () => {
                   const targetLabel = selectedClasses.map((c) => c.name).join('·')
                   try {
                     const body = withDefaultPrefix(msg)
-                    const selectedClassNames = new Set(selectedClasses.map((c) => c.name))
-                    const selectedParentIds = new Set(
-                      allStu.filter((s) => selectedClassNames.has(s.cls)).map((s) => s.pid),
-                    )
-                    const recipientPhones = uniqueRecipientPhones(
-                      parents.filter((p) => selectedParentIds.has(p.pid)).map((p) => p.phone),
-                    )
+                    const recipientPhones = classRecipientPhones
                     const messageType = classMessageType
                     const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
@@ -478,7 +685,7 @@ export default function MessagePage() {
                     alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
                   }
                 }}>
-                메시지 발송 ({selectedCount}명)
+                메시지 발송 ({classRecipientPhones.length}명)
               </button>
             </div>
             <div className="sec">
@@ -512,6 +719,14 @@ export default function MessagePage() {
         {/* ── 전체 발송 ── */}
         {tabIdx === 1 && (
           <div>
+            <RecipientPicker
+              recipients={allRecipients}
+              checkedIds={checkedAllParentIds}
+              onToggle={toggleAllParent}
+              onSelectAll={selectAllParents}
+              onClearAll={clearAllParents}
+              emptyText="등록된 학부모가 없습니다"
+            />
             <div className="sec">
               <div
                 className="card"
@@ -553,12 +768,12 @@ export default function MessagePage() {
                 </div>
               )}
               <button className="btn-primary"
-                disabled={msg.trim().length === 0 || allInsufficient}
-                style={{ opacity: (msg.trim().length === 0 || allInsufficient) ? 0.5 : 1 }}
+                disabled={allRecipientPhones.length === 0 || msg.trim().length === 0 || allInsufficient}
+                style={{ opacity: (allRecipientPhones.length === 0 || msg.trim().length === 0 || allInsufficient) ? 0.5 : 1 }}
                 onClick={async () => {
                   try {
                     const body = withDefaultPrefix(msg)
-                    const recipientPhones = uniqueRecipientPhones(parents.map((p) => p.phone))
+                    const recipientPhones = allRecipientPhones
                     const messageType = allMessageType
                     const attachFiles = await imageToAttachFiles()
                     await saveMessageSendLog({
@@ -582,7 +797,7 @@ export default function MessagePage() {
                     alert(e?.response?.data?.message ?? e?.message ?? '발송 내역 저장에 실패했습니다.')
                   }
                 }}>
-                전체 발송 ({parents.length}명)
+                전체 발송 ({allRecipientPhones.length}명)
               </button>
             </div>
             <div className="sec">
@@ -646,10 +861,10 @@ export default function MessagePage() {
                       <div key={s.sid} onClick={() => toggleUnpaid(s.sid)}
                         style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 14px', borderBottom: '1px solid var(--border)', cursor: 'pointer', background: checked ? 'var(--err2)' : 'transparent', transition: 'background .12s' }}>
                         <input type="checkbox" checked={checked} onChange={() => toggleUnpaid(s.sid)} style={{ width: 16, height: 16, accentColor: 'var(--err)', flexShrink: 0 }} />
-                        <div className="avatar" style={{ background: s.pcol, color: s.ptc, width: 32, height: 32, fontSize: 12 }}>{s.pname[0]}</div>
+                        <div className="avatar" style={{ background: s.col, color: s.tc, width: 32, height: 32, fontSize: 12 }}>{s.parentName[0]}</div>
                         <div style={{ flex: 1 }}>
                           <div className="row">
-                            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{s.pname}</span>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{s.parentName}</span>
                             <Badge cls="badge-red">미납</Badge>
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 1 }}>{s.name} · {labels}</div>

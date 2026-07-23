@@ -1,5 +1,27 @@
 // src/types/index.ts
 
+export interface Student {
+  sid: number
+  name: string
+  cls: string
+  classroomId?: number
+  grade: string
+  birth: string
+  phone?: string
+  parentName: string
+  parentPhone: string
+  col: string
+  tc: string
+  kakao: boolean
+  reg: string
+  status: '재원' | '휴원' | '퇴원'
+  fees: {
+    tuition: FeeItem
+    book: FeeItem
+  }
+}
+
+/** @deprecated 학부모 테이블 통합 이전 호환 — Student.parentName/parentPhone 사용 */
 export interface Parent {
   pid: number
   name: string
@@ -9,20 +31,6 @@ export interface Parent {
   kakao: boolean
   reg: string
   students: Student[]
-}
-
-export interface Student {
-  sid: number
-  name: string
-  cls: string
-  classroomId?: number
-  grade: string
-  birth: string
-  status: '재원' | '휴원' | '퇴원'
-  fees: {
-    tuition: FeeItem
-    book: FeeItem
-  }
 }
 
 export type FeePaymentMethod = '현금' | '카드' | '계좌이체' | '제로페이' | '기타'

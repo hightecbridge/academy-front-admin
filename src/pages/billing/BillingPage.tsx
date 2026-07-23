@@ -234,7 +234,7 @@ export default function BillingPage() {
       const limit = studentMaxForPlan(planId) ?? 50
       if (studentCount > limit) {
         const planName = PLANS.find((p) => p.id === planId)?.name ?? '요금제'
-        return `현재 등록 학생은 ${studentCount}명입니다. ${planName} 요금제는 최대 ${limit}명까지 이용 가능합니다. 학부모 관리에서 등록 인원을 줄인 후 진행해 주세요.`
+        return `현재 등록 학생은 ${studentCount}명입니다. ${planName} 요금제는 최대 ${limit}명까지 이용 가능합니다. 학생 관리에서 등록 인원을 줄인 후 진행해 주세요.`
       }
     }
     if (recurringRegistered && planId === activeBillingPlanId) {

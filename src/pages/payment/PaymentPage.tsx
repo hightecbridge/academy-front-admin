@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { TopBar, TabBar, Avatar, Badge, ProgBar, ChevronRight, useToast, Toast } from '../../components/common'
 import FeePaymentRow from '../../components/payment/FeePaymentRow'
 import PaymentYearMonthSelect from '../../components/payment/PaymentYearMonthSelect'
-import { useDataStore, totalFee, paidFee, isFullPaid, isPartPaid, payPct, barCol, statusBdgCls, statusBdgTxt, clsBdg } from '../../store/dataStore'
+import { useDataStore, totalFee, paidFee, isFullPaid, isPartPaid, payPct, barCol, statusBdgCls, statusBdgTxt, clsBdg, studentInClass } from '../../store/dataStore'
 import { formatYearMonthLabel } from '../../utils/paymentMonth'
 import { formatPaidMeta } from '../../utils/feePayment'
 import { downloadPaymentStatusExcel } from '../../utils/paymentExport'
@@ -12,10 +12,10 @@ import type { FeeItemKey } from '../../types'
 
 export default function PaymentPage() {
   const navigate = useNavigate()
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const classes = useDataStore((s) => s.classes)
   const paymentYearMonth = useDataStore((s) => s.paymentYearMonth)
-  const fetchParents = useDataStore((s) => s.fetchParents)
+  const fetchStudents = useDataStore((s) => s.fetchStudents)
   const setPaymentYearMonth = useDataStore((s) => s.setPaymentYearMonth)
   const updateFee = useDataStore((s) => s.updateFee)
   const { ref: toastRef, show: showToast } = useToast()
@@ -24,7 +24,7 @@ export default function PaymentPage() {
   const [monthLoading, setMonthLoading] = useState(false)
 
   useEffect(() => {
-    void fetchParents(paymentYearMonth)
+    void fetchStudents(paymentYearMonth)
   }, [])
 
   const onYearMonthChange = async (ym: number) => {
@@ -32,21 +32,19 @@ export default function PaymentPage() {
     setPaymentYearMonth(ym)
     setMonthLoading(true)
     try {
-      await fetchParents(ym)
+      await fetchStudents(ym)
     } finally {
       setMonthLoading(false)
     }
   }
 
-  const allStu = parents.flatMap((p) => p.students.map((s) => ({
-    ...s, pid: p.pid, pname: p.name, pcol: p.col, ptc: p.tc,
-  })))
+  const allStu = students
   const qNorm = q.trim().toLowerCase()
   const filtered = allStu
     .filter((s) => tabIdx === 1 ? !isFullPaid(s) : tabIdx === 2 ? isFullPaid(s) : true)
     .filter((s) => {
       if (!qNorm) return true
-      return s.name.toLowerCase().includes(qNorm) || s.pname.toLowerCase().includes(qNorm)
+      return s.name.toLowerCase().includes(qNorm) || s.parentName.toLowerCase().includes(qNorm)
     })
 
   const tAmt = allStu.reduce((a, s) => a + totalFee(s), 0)
@@ -58,7 +56,7 @@ export default function PaymentPage() {
 
   const COLORS = ['var(--acc)', 'var(--ok)', 'var(--purple)', 'var(--warn)', 'var(--err)']
   const clsStats = classes.map((cls, ci) => {
-    const cs = allStu.filter((s) => s.cls === cls.name)
+    const cs = allStu.filter((s) => studentInClass(s, cls))
     const cp = cs.reduce((a, s) => a + paidFee(s), 0)
     const ct = cs.reduce((a, s) => a + totalFee(s), 0)
     return { c: cls.name, pct: ct > 0 ? Math.round((cp / ct) * 100) : 0, col: COLORS[ci % COLORS.length] }
@@ -66,7 +64,7 @@ export default function PaymentPage() {
 
   const handleExcelDownload = () => {
     try {
-      downloadPaymentStatusExcel(parents, paymentYearMonth)
+      downloadPaymentStatusExcel(students, paymentYearMonth)
       showToast('엑셀 파일을 다운로드했습니다.')
     } catch {
       showToast('엑셀 다운로드에 실패했습니다.')
@@ -206,12 +204,12 @@ export default function PaymentPage() {
           {filtered.map((s) => (
             <div key={s.sid} className="pay-card">
               <div className="pay-head" onClick={() => navigate(`/payment/${s.sid}`)}>
-                <Avatar name={s.pname} col={s.pcol} tc={s.ptc} />
+                <Avatar name={s.parentName} col={s.col} tc={s.tc} />
                 <div style={{ flex: 1 }}>
                   <div className="row">
                     <div>
                       <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{s.name}</span>
-                      <span style={{ fontSize: 12, color: 'var(--slate2)', marginLeft: 6 }}>{s.pname}</span>
+                      <span style={{ fontSize: 12, color: 'var(--slate2)', marginLeft: 6 }}>{s.parentName}</span>
                     </div>
                     <div style={{ display: 'flex', gap: 4 }}>
                       <Badge cls={statusBdgCls(s)}>{statusBdgTxt(s)}</Badge>

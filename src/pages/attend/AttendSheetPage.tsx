@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, useToast, Toast } from '../../components/common'
-import { useDataStore } from '../../store/dataStore'
+import { useDataStore, studentInClass } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
 import type { AttendRecord, AttendStatus } from '../../types'
 
@@ -21,7 +21,7 @@ export default function AttendSheetPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
   const classes = useDataStore((s) => s.classes)
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const attendSheets = useDataStore((s) => s.attendSheets)
   const fetchAttend = useDataStore((s) => s.fetchAttend)
   const senderNumbers = useDataStore((s) => s.senderNumbers)
@@ -32,8 +32,8 @@ export default function AttendSheetPage() {
   const { ref: toastRef, show: showToast } = useToast()
 
   const cls = classes.find((c) => c.cid === Number(cid))
-  const allStudents = parents.flatMap((p) => p.students)
-  const stuInClass = allStudents.filter((s) => s.cls === cls?.name)
+  const allStudents = students
+  const stuInClass = cls ? allStudents.filter((s) => studentInClass(s, cls)) : []
 
   const sheetId = `${cid}_${date}`
   const existing = attendSheets.find((s) => s.id === sheetId)
@@ -169,10 +169,9 @@ export default function AttendSheetPage() {
     const candidates = stuInClass.filter((s) => presentStudentIds.has(s.sid))
     const firstStudent = candidates[0] ?? stuInClass[0]
     if (!firstStudent) return null
-    const parent = parents.find((p) => p.students.some((s) => s.sid === firstStudent.sid))
     return {
       academyName: user?.academyName?.trim() || cls?.name || '',
-      parentName: parent?.name ?? '보호자',
+      parentName: firstStudent.parentName || '보호자',
       studentName: firstStudent.name,
       attendDateTime: formatAttendAppliedAt(existing?.createdAt) || formatAttendAppliedAt(new Date().toISOString()),
     }
@@ -223,11 +222,10 @@ export default function AttendSheetPage() {
 
     const noticeTargets = presentStudents
       .map((student) => {
-        const parent = parents.find((p) => p.students.some((s) => s.sid === student.sid))
-        const phone = normalizePhone(parent?.phone ?? '')
+        const phone = normalizePhone(student.parentPhone ?? '')
         return {
           studentName: student.name,
-          parentName: parent?.name ?? '보호자',
+          parentName: student.parentName || '보호자',
           phone,
         }
       })
@@ -382,7 +380,7 @@ export default function AttendSheetPage() {
             const curStatus: AttendStatus = rec?.status ?? '출석'
             const style = STATUS_STYLE[curStatus]
             const isNoteOpen = showNoteFor === stu.sid
-            const parentInfo = parents.find((p) => p.students.some((s) => s.sid === stu.sid))
+            const parentName = stu.parentName
 
             return (
               <div
@@ -403,7 +401,7 @@ export default function AttendSheetPage() {
                       <div>
                         <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{stu.name}</div>
                         <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 1 }}>
-                          {stu.grade} · {parentInfo?.name ?? ''}
+                          {stu.grade} · {parentName}
                           {notes[stu.sid] && (
                             <span style={{ color: 'var(--warn)', marginLeft: 6 }}>📝 {notes[stu.sid]}</span>
                           )}
@@ -528,7 +526,7 @@ export default function AttendSheetPage() {
               </button>
             </div>
             <div style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>
-              대상: {cls.name} 학부모 {Array.from(new Set(stuInClass.map((s) => parents.find((p) => p.students.some((ps) => ps.sid === s.sid))?.pid))).filter(Boolean).length}명
+              대상: {cls.name} 학부모 {new Set(stuInClass.map((s) => s.parentPhone.replace(/[^\d]/g, ''))).size}명
             </div>
             <label className="input-label" style={{ marginTop: 0 }}>발신 번호</label>
             <select

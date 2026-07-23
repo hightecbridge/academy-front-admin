@@ -2,7 +2,7 @@
 import { create } from 'zustand'
 import client from '../api/client'
 import type {
-  Parent, ClassRoom, AttendSheet, AttendRecord,
+  Student, ClassRoom, AttendSheet, AttendRecord,
   AttendStatus, NoticeItem, CalendarEvent,
   HomeworkSheet, HomeworkRecord, SenderNumber, MessageSendLog,
   FeeItem,
@@ -12,7 +12,7 @@ import type {
 import { currentYearMonth } from '../utils/paymentMonth'
 
 interface DataState {
-  parents:        Parent[]
+  students:       Student[]
   /** 수납현황에서 조회·저장하는 기준 연월 (YYYYMM) */
   paymentYearMonth: number
   classes:        ClassRoom[]
@@ -26,6 +26,8 @@ interface DataState {
   isLoading:      boolean
 
   fetchClasses:   () => Promise<void>
+  fetchStudents:  (yearMonth?: number) => Promise<void>
+  /** @deprecated fetchStudents 사용 */
   fetchParents:   (yearMonth?: number) => Promise<void>
   setPaymentYearMonth: (yearMonth: number) => void
   fetchAttend:    (cid: number) => Promise<void>
@@ -54,9 +56,21 @@ interface DataState {
   updateClass: (cid: number, cls: Partial<Omit<ClassRoom, 'cid'>>) => Promise<void>
   deleteClass: (cid: number) => Promise<void>
 
-  addParent:   (p: { name: string; phone: string; loginPhone?: string; loginPassword?: string; badgeColor?: string; badgeTextColor?: string }) => Promise<Parent>
-  addStudent:  (pid: number, s: { name: string; grade: string; classroomId: number; status?: string }) => Promise<void>
-  deleteParent: (pid: number) => Promise<void>
+  createStudent: (s: {
+    name: string
+    grade: string
+    classroomId: number
+    parentName: string
+    parentPhone: string
+    status?: string
+    phone?: string
+    birthDate?: string
+    loginPhone?: string
+    loginPassword?: string
+    badgeColor?: string
+    badgeTextColor?: string
+    kakaoLinked?: boolean
+  }) => Promise<Student>
   deleteStudent: (sid: number) => Promise<void>
 
   updateFee:   (sid: number, key: FeeItemKey, payload: FeeUpdatePayload, yearMonth?: number) => Promise<void>
@@ -121,26 +135,27 @@ function toFeeItem(fees: any[] | undefined, label: string, ym: number): FeeItem 
   return { label, amount: 0, paid: false, yearMonth: ym, paidAt: null, paymentMethod: null }
 }
 
-function toParent(d: any, yearMonth: number): Parent {
+function toStudent(d: any, yearMonth: number): Student {
   const ym = yearMonth
   return {
-    pid: d.id, name: d.name, phone: d.phone,
-    col: d.badgeColor ?? '#DBEAFE', tc: d.badgeTextColor ?? '#1D4ED8',
+    sid: d.id,
+    name: d.name,
+    cls: d.classroomName ?? '',
+    classroomId: d.classroomId ?? undefined,
+    grade: d.grade,
+    birth: d.birthDate ?? '',
+    phone: d.phone ?? '',
+    parentName: d.parentName ?? '',
+    parentPhone: d.parentPhone ?? '',
+    col: d.badgeColor ?? '#DBEAFE',
+    tc: d.badgeTextColor ?? '#1D4ED8',
     kakao: d.kakaoLinked ?? false,
     reg: d.createdAt?.slice(0, 10) ?? '',
-    students: (d.students ?? []).map((s: any) => ({
-      sid:    s.id,
-      name:   s.name,
-      cls:    s.classroomName ?? '',
-      classroomId: s.classroomId ?? undefined,
-      grade:  s.grade,
-      birth:  s.birthDate ?? '',
-      status: (s.status ?? '재원') as '재원' | '휴원' | '퇴원',
-      fees: {
-        tuition: toFeeItem(s.fees, '수업료', ym),
-        book: toFeeItem(s.fees, '교재비', ym),
-      },
-    })),
+    status: (d.status ?? '재원') as '재원' | '휴원' | '퇴원',
+    fees: {
+      tuition: toFeeItem(d.fees, '수업료', ym),
+      book: toFeeItem(d.fees, '교재비', ym),
+    },
   }
 }
 
@@ -225,7 +240,7 @@ function toMessageSendLog(d: any): MessageSendLog {
 
 // ── Store ──────────────────────────────────────────
 export const useDataStore = create<DataState>((set, get) => ({
-  parents: [],
+  students: [],
   paymentYearMonth: currentYearMonth(),
   classes: [], attendSheets: [],
   homeworkSheets: [], notices: [], noticeTotal: 0, events: [],
@@ -243,13 +258,15 @@ export const useDataStore = create<DataState>((set, get) => ({
 
   setPaymentYearMonth: (yearMonth) => set({ paymentYearMonth: yearMonth }),
 
-  fetchParents: async (yearMonth) => {
+  fetchStudents: async (yearMonth) => {
     const ym = yearMonth ?? get().paymentYearMonth
     try {
-      const res = await client.get('/admin/parents', { params: { yearMonth: ym } })
-      set({ parents: res.data.data.map((p: any) => toParent(p, ym)), paymentYearMonth: ym })
+      const res = await client.get('/admin/students', { params: { yearMonth: ym } })
+      set({ students: res.data.data.map((s: any) => toStudent(s, ym)), paymentYearMonth: ym })
     } catch {}
   },
+
+  fetchParents: async (yearMonth) => get().fetchStudents(yearMonth),
 
   fetchAttend: async (cid) => {
     try {
@@ -381,19 +398,16 @@ export const useDataStore = create<DataState>((set, get) => ({
     const nameChanged = cur.name !== updated.name
     set(s => ({
       classes: s.classes.map(c => c.cid === cid ? updated : c),
-      parents: nameChanged
-        ? s.parents.map(p => ({
-            ...p,
-            students: p.students.map(stu =>
-              (stu.classroomId === cid || (!stu.classroomId && stu.cls === cur.name))
-                ? { ...stu, cls: updated.name, classroomId: cid }
-                : stu
-            ),
-          }))
-        : s.parents,
+      students: nameChanged
+        ? s.students.map(stu =>
+            (stu.classroomId === cid || (!stu.classroomId && stu.cls === cur.name))
+              ? { ...stu, cls: updated.name, classroomId: cid }
+              : stu
+          )
+        : s.students,
     }))
     if (nameChanged) {
-      await get().fetchParents(get().paymentYearMonth)
+      await get().fetchStudents(get().paymentYearMonth)
     }
   },
 
@@ -402,58 +416,47 @@ export const useDataStore = create<DataState>((set, get) => ({
     set(s => ({ classes: s.classes.filter(c => c.cid !== cid) }))
   },
 
-  // ── 학부모/학생 ──────────────────────────────────
-  addParent: async (parent) => {
-    const res = await client.post('/admin/parents', {
-      name:           parent.name,
-      phone:          parent.phone,
-      loginPhone:     parent.loginPhone    ?? parent.phone,
-      loginPassword:  parent.loginPassword ?? '0000',
-      badgeColor:     parent.badgeColor    ?? '#DBEAFE',
-      badgeTextColor: parent.badgeTextColor ?? '#1D4ED8',
+  // ── 학생 ──────────────────────────────────────────
+  createStudent: async (student) => {
+    const res = await client.post('/admin/students', {
+      name: student.name,
+      grade: student.grade,
+      classroomId: student.classroomId,
+      parentName: student.parentName,
+      parentPhone: student.parentPhone,
+      status: student.status ?? '재원',
+      phone: student.phone?.trim() || undefined,
+      birthDate: student.birthDate?.trim() || undefined,
+      loginPhone: student.loginPhone ?? student.parentPhone,
+      loginPassword: student.loginPassword ?? '0000',
+      badgeColor: student.badgeColor ?? '#DBEAFE',
+      badgeTextColor: student.badgeTextColor ?? '#1D4ED8',
+      kakaoLinked: student.kakaoLinked ?? false,
     })
     const ym = get().paymentYearMonth
-    const created = toParent(res.data.data, ym)
-    set(s => ({ parents: [created, ...s.parents] }))
+    const created = toStudent(res.data.data, ym)
+    set(s => ({ students: [created, ...s.students] }))
     return created
   },
 
-  addStudent: async (pid, student) => {
-    await client.post(`/admin/parents/${pid}/students`, {
-      name:        student.name,
-      grade:       student.grade,
-      classroomId: student.classroomId,
-      status:      student.status ?? '재원',
-    })
-    // 학부모 목록 새로고침
-    const ym = get().paymentYearMonth
-    const pRes = await client.get('/admin/parents', { params: { yearMonth: ym } })
-    set({ parents: pRes.data.data.map((p: any) => toParent(p, ym)) })
-  },
-
-  deleteParent: async (pid) => {
-    await client.delete(`/admin/parents/${pid}`)
-    set(s => ({ parents: s.parents.filter(p => p.pid !== pid) }))
-  },
-
   deleteStudent: async (sid) => {
-    await client.delete(`/admin/parents/students/${sid}`)
-    await get().fetchParents(get().paymentYearMonth)
+    await client.delete(`/admin/students/${sid}`)
+    await get().fetchStudents()
   },
 
   // ── 수납 ────────────────────────────────────────
   updateFee: async (sid, key, payload, yearMonth) => {
-    const st = get().parents.flatMap((p) => p.students).find((s) => s.sid === sid)
+    const st = get().students.find((s) => s.sid === sid)
     const ym = yearMonth ?? st?.fees[key]?.yearMonth ?? get().paymentYearMonth
     const label = key === 'tuition' ? '수업료' : '교재비'
-    await client.patch(`/admin/parents/students/${sid}/fees`, {
+    await client.patch(`/admin/students/${sid}/fees`, {
       label,
       paid: payload.paid,
       yearMonth: ym,
       paidAt: payload.paid ? payload.paidAt : undefined,
       paymentMethod: payload.paid ? payload.paymentMethod : undefined,
     })
-    await get().fetchParents(ym)
+    await get().fetchStudents(ym)
   },
 
   // ── 출석 ────────────────────────────────────────
@@ -683,12 +686,20 @@ export function clsBdg(_clsName: string) {
   return 'badge-purple'
 }
 
-/** 반 소속 학생 매칭 — 반명 변경 후에도 classroomId 기준으로 유지 */
+/** 반 소속 학생 매칭 — classroomId 우선, 없으면 반명(cls)으로 폴백 */
 export function studentInClass(
   student: { cls: string; classroomId?: number },
   cls: { cid: number; name: string },
 ) {
   if (student.classroomId != null) return student.classroomId === cls.cid
   return student.cls === cls.name
+}
+
+/** 반별 학생 목록 (출석·수납·학생관리 등 공통) */
+export function studentsInClass<T extends { cls: string; classroomId?: number }>(
+  students: T[],
+  cls: { cid: number; name: string },
+): T[] {
+  return students.filter((s) => studentInClass(s, cls))
 }
 

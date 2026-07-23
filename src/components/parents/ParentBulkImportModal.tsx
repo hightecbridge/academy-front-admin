@@ -11,11 +11,10 @@ import {
 type Step = 'guide' | 'preview' | 'done'
 
 export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
-  const parents = useDataStore((s) => s.parents)
+  const students = useDataStore((s) => s.students)
   const classes = useDataStore((s) => s.classes)
-  const addParent = useDataStore((s) => s.addParent)
-  const addStudent = useDataStore((s) => s.addStudent)
-  const fetchParents = useDataStore((s) => s.fetchParents)
+  const createStudent = useDataStore((s) => s.createStudent)
+  const fetchStudents = useDataStore((s) => s.fetchStudents)
 
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<Step>('guide')
@@ -50,13 +49,10 @@ export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
     setImporting(true)
     try {
       const res = await executeParentBulkImport(okRows, {
-        parents,
         classes,
-        addParent,
-        addStudent,
-        getParents: () => useDataStore.getState().parents,
+        createStudent,
       })
-      await fetchParents()
+      await fetchStudents()
       setResult(res)
       setStep('done')
     } finally {
@@ -90,7 +86,7 @@ export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
       >
         <div className="row" style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--navy)' }}>
-            학부모 Excel 일괄 등록
+            학생 Excel 일괄 등록
           </div>
           <button
             type="button"
@@ -119,8 +115,9 @@ export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
               <ol style={{ margin: 0, paddingLeft: 18 }}>
                 <li><strong>양식 다운로드</strong>로 Excel 파일을 받습니다. (「작성가이드」 시트 참고)</li>
                 <li><strong>등록양식</strong> 시트 2행부터 데이터를 입력합니다.</li>
-                <li><strong>필수</strong>: 학부모이름, 연락처</li>
+                <li><strong>필수</strong>: 학부모이름, 학부모연락처</li>
                 <li><strong>학생 등록</strong> 시: 학생이름·학년·반을 모두 입력합니다.</li>
+                <li><strong>학생연락처</strong>는 선택 입력입니다.</li>
                 <li><strong>반 이름</strong>은 클래스 메뉴에 등록한 이름과 <strong>완전히 동일</strong>해야 합니다.</li>
                 <li><strong>같은 연락처</strong>로 여러 행을 넣으면 한 학부모에 학생이 여러 명 등록됩니다.</li>
                 <li>이미 등록된 연락처는 <strong>기존 학부모</strong>에 학생만 추가됩니다.</li>
@@ -186,7 +183,7 @@ export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
               <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: 'var(--bg2)', position: 'sticky', top: 0 }}>
-                    {['행', '학부모', '연락처', '학생', '학년', '반', '상태', '결과'].map((h) => (
+                    {['행', '학부모', '학부모연락처', '학생', '학생연락처', '학년', '반', '상태', '결과'].map((h) => (
                       <th key={h} style={{ padding: '8px 6px', textAlign: 'left', fontWeight: 600, borderBottom: '1px solid var(--border)' }}>{h}</th>
                     ))}
                   </tr>
@@ -198,6 +195,7 @@ export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
                       <td style={{ padding: '6px' }}>{r.parentName}</td>
                       <td style={{ padding: '6px' }}>{r.phone}</td>
                       <td style={{ padding: '6px' }}>{r.studentName || '—'}</td>
+                      <td style={{ padding: '6px' }}>{r.studentPhone || '—'}</td>
                       <td style={{ padding: '6px' }}>{r.grade || '—'}</td>
                       <td style={{ padding: '6px' }}>{r.className || '—'}</td>
                       <td style={{ padding: '6px' }}>{r.status || '재원'}</td>
@@ -240,8 +238,7 @@ export function ParentBulkImportModal({ onClose }: { onClose: () => void }) {
               }}
             >
               <div style={{ fontWeight: 700, color: 'var(--navy)', marginBottom: 6 }}>등록이 완료되었습니다</div>
-              <div>신규 학부모: <strong>{result.parentsCreated}</strong>명</div>
-              <div>등록 학생: <strong>{result.studentsAdded}</strong>명</div>
+              <div>등록 학생: <strong>{result.studentsCreated}</strong>명</div>
               {result.skipped > 0 && <div>건너뜀(오류 행): {result.skipped}건</div>}
               {result.failures.length > 0 && (
                 <div style={{ marginTop: 8, color: 'var(--err)' }}>
