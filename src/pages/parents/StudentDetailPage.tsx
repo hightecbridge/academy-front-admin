@@ -2,8 +2,12 @@
 import { useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, EditIcon, IconBtn, useToast, Toast } from '../../components/common'
-import { useDataStore, clsBdg, clsCol, statusBdgCls, statusBdgTxt, totalFee, paidFee, payPct, barCol } from '../../store/dataStore'
+import { useDataStore, clsBdg, clsCol, statusBdgCls, totalFee, paidFee, payPct, barCol } from '../../store/dataStore'
 import type { FeeItemKey } from '../../types'
+import { StudentConsultSection } from './StudentConsultSection'
+import { StudentGradeSection } from './StudentGradeSection'
+import { useAuthStore } from '../../store/authStore'
+import { isMenuEnabled } from '../../config/menuCatalog'
 
 const GRADES = ['초등 1','초등 2','초등 3','초등 4','초등 5','초등 6','중등 1','중등 2','중등 3','고등 1','고등 2','고등 3']
 
@@ -21,24 +25,42 @@ export function StudentDetailPage() {
   const navigate = useNavigate()
   const students = useDataStore((s) => s.students)
   const updateFee = useDataStore((s) => s.updateFee)
-  const deleteStudent = useDataStore((s) => s.deleteStudent)
+  const withdrawStudent = useDataStore((s) => s.withdrawStudent)
+  const updateStudentStatus = useDataStore((s) => s.updateStudentStatus)
   const { ref: toastRef, show: showToast } = useToast()
   const [deleting, setDeleting] = useState(false)
+  const menuSettings = useAuthStore((s) => s.user?.menuSettings)
+  const showConsult = isMenuEnabled(menuSettings, 'consult')
+  const showExams = isMenuEnabled(menuSettings, 'examsRegular') || isMenuEnabled(menuSettings, 'examsDaily')
+  const showPayment = isMenuEnabled(menuSettings, 'payment')
   const s = students.find((x) => x.sid === Number(sid))
   if (!s) return <div className="sec">학생을 찾을 수 없습니다.</div>
 
-  const handleDelete = async () => {
+  const handleWithdraw = async () => {
+    if (s.status === '퇴원') {
+      if (!window.confirm(`${s.name} 학생을 재원으로 복귀하시겠습니까?`)) return
+      setDeleting(true)
+      try {
+        await updateStudentStatus(s.sid, '재원')
+        showToast('재원으로 복귀했습니다.')
+      } catch (e: unknown) {
+        const err = e as { response?: { data?: { message?: string } }; message?: string }
+        alert(err?.response?.data?.message ?? err?.message ?? '상태 변경에 실패했습니다.')
+      } finally {
+        setDeleting(false)
+      }
+      return
+    }
     if (!window.confirm(
-      `${s.name} 학생을 삭제하시겠습니까?\n\n수납·출석·숙제 기록도 함께 삭제되며 되돌릴 수 없습니다.`,
+      `${s.name} 학생을 퇴원 처리하시겠습니까?\n\n상담·수납·출석 기록은 그대로 남아 확인할 수 있습니다.`,
     )) return
     setDeleting(true)
     try {
-      await deleteStudent(s.sid)
-      showToast('학생이 삭제되었습니다.')
-      navigate('/parents')
+      await withdrawStudent(s.sid)
+      showToast('퇴원 처리되었습니다.')
     } catch (e: unknown) {
       const err = e as { response?: { data?: { message?: string } }; message?: string }
-      alert(err?.response?.data?.message ?? err?.message ?? '삭제에 실패했습니다.')
+      alert(err?.response?.data?.message ?? err?.message ?? '퇴원 처리에 실패했습니다.')
     } finally {
       setDeleting(false)
     }
@@ -75,8 +97,7 @@ export function StudentDetailPage() {
               <div style={{ fontSize: 13, color: 'var(--slate2)', marginTop: 2 }}>학부모 {s.parentName}</div>
               <div style={{ marginTop: 6, display: 'flex', gap: 5, flexWrap: 'wrap' }}>
                 <Badge cls={clsBdg(s.cls)}>{s.cls}</Badge>
-                <Badge cls="badge-green">{s.status}</Badge>
-                <Badge cls={statusBdgCls(s)}>{statusBdgTxt(s)}</Badge>
+                <Badge cls={statusBdgCls(s)}>{s.status}</Badge>
               </div>
             </div>
           </div>
@@ -96,11 +117,22 @@ export function StudentDetailPage() {
             </div>
             <div className="field-row">
               <span className="field-label">재원 상태</span>
-              <Badge cls="badge-green">{s.status}</Badge>
+              <Badge cls={statusBdgCls(s)}>{s.status}</Badge>
             </div>
+            <div className="field-row"><span className="field-label">등록일</span><span className="field-value">{s.reg || '-'}</span></div>
+            {s.status === '퇴원' && (
+              <div className="field-row">
+                <span className="field-label">퇴원일</span>
+                <span className="field-value">{s.withdrawnAt ? String(s.withdrawnAt).slice(0, 10) : '-'}</span>
+              </div>
+            )}
           </div>
         </div>
 
+        {showConsult && <StudentConsultSection sid={s.sid} studentName={s.name} />}
+        {showExams && <StudentGradeSection sid={s.sid} classroomId={s.classroomId} />}
+
+        {showPayment && (
         <div className="sec">
           <div className="sec-title">수납 정보 (토글로 변경)</div>
           <div className="card">
@@ -133,6 +165,7 @@ export function StudentDetailPage() {
             <ProgBar pct={payPct(s)} color={barCol(s)} />
           </div>
         </div>
+        )}
 
         <div className="sec">
           <button className="btn-secondary" onClick={() => navigate(`/parents/${s.sid}/edit`)}>
@@ -143,9 +176,11 @@ export function StudentDetailPage() {
             className="btn-danger"
             disabled={deleting}
             style={{ opacity: deleting ? 0.6 : 1 }}
-            onClick={() => void handleDelete()}
+            onClick={() => void handleWithdraw()}
           >
-            {deleting ? '삭제 중…' : '학생 삭제'}
+            {deleting
+              ? '처리 중…'
+              : s.status === '퇴원' ? '재원 복귀' : '퇴원 처리'}
           </button>
         </div>
       </div>

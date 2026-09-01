@@ -19,8 +19,12 @@ export default function LoginPage() {
       await useBillingAccessStore.getState().refresh()
       const { paymentRequired } = useBillingAccessStore.getState()
       if (paymentRequired) {
-        useBillingAccessStore.getState().requestExpiredAlertOnBilling()
-        navigate('/billing', { replace: true })
+        if (useAuthStore.getState().user?.role === 'teacher') {
+          navigate('/', { replace: true })
+        } else {
+          useBillingAccessStore.getState().requestExpiredAlertOnBilling()
+          navigate('/billing', { replace: true })
+        }
       } else {
         navigate('/', { replace: true })
       }
@@ -68,19 +72,19 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit}>
             {/* 이메일 */}
             <div style={styles.fieldGroup}>
-              <label style={styles.label}>이메일</label>
+              <label style={styles.label}>아이디 또는 이메일</label>
               <div style={styles.inputWrap}>
                 <svg viewBox="0 0 24 24" fill="none" stroke="var(--slate3)" strokeWidth="1.8" strokeLinecap="round" style={styles.inputIcon}>
                   <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
                   <polyline points="22,6 12,13 2,6"/>
                 </svg>
                 <input
-                  type="email"
-                  placeholder="admin@hiacademy.kr"
+                  type="text"
+                  placeholder="원장 이메일 또는 교사 아이디"
                   value={email}
                   onChange={e => { setEmail(e.target.value); clearError() }}
                   style={styles.input}
-                  autoComplete="email"
+                  autoComplete="username"
                   required
                 />
               </div>

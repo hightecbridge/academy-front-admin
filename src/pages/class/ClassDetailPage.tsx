@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { TopBar, Breadcrumb, TabBar, Badge, EditIcon, IconBtn, ChevronRight, Fab } from '../../components/common'
 import { useDataStore, statusBdgCls, statusBdgTxt, studentInClass } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
+import { isMenuEnabled } from '../../config/menuCatalog'
 
 export default function ClassDetailPage() {
   const { cid } = useParams()
@@ -11,6 +13,10 @@ export default function ClassDetailPage() {
   const classes = useDataStore((s) => s.classes)
   const students = useDataStore((s) => s.students)
   const deleteClass = useDataStore((s) => s.deleteClass)
+  const isDirector = useAuthStore((s) => s.user?.role === 'admin')
+  const menuSettings = useAuthStore((s) => s.user?.menuSettings)
+  const showClassNotice = isMenuEnabled(menuSettings, 'classNotice')
+  const showExams = isMenuEnabled(menuSettings, 'examsDaily')
   const initialTab = (location.state as { tabIdx?: number } | null)?.tabIdx ?? 0
   const [tabIdx, setTabIdx] = useState(initialTab)
 
@@ -18,10 +24,11 @@ export default function ClassDetailPage() {
   if (!cls) return <div className="sec" style={{ padding: 20 }}>반 정보를 찾을 수 없습니다.</div>
 
   const allStudents = students.filter((s) => studentInClass(s, cls))
+  const currentStudents = allStudents.filter((s) => s.status !== '퇴원')
 
   const handleDelete = () => {
     if (allStudents.length > 0) {
-      alert(`${cls.name}에 학생 ${allStudents.length}명이 배정되어 있어 삭제할 수 없습니다.\n학생을 먼저 다른 반으로 이동하거나 삭제해 주세요.`)
+      alert(`${cls.name}에 학생 ${allStudents.length}명(퇴원 포함)이 배정되어 있어 삭제할 수 없습니다.\n학생을 먼저 다른 반으로 이동해 주세요.`)
       return
     }
     if (window.confirm(`${cls.name}을 삭제하시겠습니까?`)) {
@@ -37,9 +44,11 @@ export default function ClassDetailPage() {
         sub={cls.subject}
         onBack={() => navigate('/class')}
         right={
+          isDirector ? (
           <IconBtn onClick={() => navigate(`/class/${cls.cid}/edit`)}>
             <EditIcon />
           </IconBtn>
+          ) : undefined
         }
       />
       <Breadcrumb items={[
@@ -47,7 +56,7 @@ export default function ClassDetailPage() {
         { label: cls.name },
       ]} />
       <TabBar
-        tabs={['기본정보', `학생 ${allStudents.length}명`]}
+        tabs={['기본정보', `학생 ${currentStudents.length}명`]}
         active={tabIdx}
         onChange={setTabIdx}
       />
@@ -68,7 +77,7 @@ export default function ClassDetailPage() {
                     background: 'rgba(255,255,255,0.35)', borderRadius: 10,
                     padding: '8px 14px', flex: 1, textAlign: 'center',
                   }}>
-                    <div style={{ fontSize: 20, fontWeight: 700, color: cls.textColor }}>{allStudents.length}</div>
+                    <div style={{ fontSize: 20, fontWeight: 700, color: cls.textColor }}>{currentStudents.length}</div>
                     <div style={{ fontSize: 10, color: cls.textColor, opacity: 0.75 }}>현재 학생</div>
                   </div>
                   <div style={{
@@ -132,6 +141,22 @@ export default function ClassDetailPage() {
               </div>
             </div>
 
+            {(showClassNotice || showExams) && (
+            <div className="sec">
+              {showClassNotice && (
+              <button className="btn-secondary" onClick={() => navigate('/class-notice')}>
+                클래스 알림장
+              </button>
+              )}
+              {showExams && (
+              <button className="btn-secondary" onClick={() => navigate('/exams/daily')}>
+                일일테스트 관리
+              </button>
+              )}
+            </div>
+            )}
+
+            {isDirector && (
             <div className="sec">
               <button className="btn-secondary" onClick={() => navigate(`/class/${cls.cid}/edit`)}>
                 반 정보 수정
@@ -140,6 +165,7 @@ export default function ClassDetailPage() {
                 반 삭제
               </button>
             </div>
+            )}
           </>
         )}
 

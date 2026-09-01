@@ -16,6 +16,7 @@ export interface AuthUser {
   academyAddress?: string
   academyDesc?: string
   academyId?: number
+  menuSettings?: Record<string, { enabled: boolean; parentVisible: boolean }>
 }
 
 export interface SignupData {
@@ -38,6 +39,7 @@ interface AuthState {
   logout: () => void
   clearError: () => void
   updateProfile: (data: Partial<AuthUser>) => Promise<boolean>
+  updateMenuSettings: (menus: AuthUser['menuSettings']) => Promise<boolean>
   changePassword: (current: string, next: string) => Promise<boolean>
   bootstrap: () => Promise<void>
 }
@@ -57,7 +59,7 @@ function consumeLandingHandoffHash(): void {
   window.history.replaceState(null, '', window.location.pathname + window.location.search)
 }
 
-const MSG_CREDENTIALS = '이메일 또는 비밀번호가 올바르지 않습니다.'
+const MSG_CREDENTIALS = '아이디 또는 비밀번호가 올바르지 않습니다.'
 const MSG_SERVER_UNAVAILABLE =
   '서버에 연결할 수 없습니다. API 서버가 켜져 있는지, 네트워크 연결을 확인한 뒤 다시 시도해 주세요.'
 const MSG_SERVER_ERROR = '서버 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.'
@@ -125,6 +127,7 @@ function toUser(d: any): AuthUser {
     profileImage: d.profileImageBase64 ?? d.profileImage ?? undefined,
     academyLogo: d.academy?.logoBase64 ?? undefined,
     academyId: d.academy?.id,
+    menuSettings: d.academy?.menuSettings ?? undefined,
   }
 }
 
@@ -238,6 +241,21 @@ export const useAuthStore = create<AuthState>((set) => ({
       if (!user.academyLogo && data.academyLogo) user.academyLogo = data.academyLogo
       if (data.phone) user.phone = data.phone
       if (apiData.token) localStorage.setItem(TOKEN_KEY, apiData.token)
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
+      set({ user })
+      return true
+    } catch {
+      return false
+    }
+  },
+
+  updateMenuSettings: async (menus) => {
+    try {
+      const res = await client.put('/admin/menu-settings', { menus })
+      const saved = res.data.data as AuthUser['menuSettings']
+      const currentUser = useAuthStore.getState().user
+      if (!currentUser) return true
+      const user = { ...currentUser, menuSettings: saved }
       localStorage.setItem(USER_KEY, JSON.stringify(user))
       set({ user })
       return true

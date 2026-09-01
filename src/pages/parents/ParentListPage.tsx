@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, TabBar, Avatar, Badge, ChevronRight, Fab, SearchIcon, IconBtn } from '../../components/common'
 import { ParentBulkImportModal } from '../../components/parents/ParentBulkImportModal'
-import { useDataStore, clsBdg, clsCol, studentInClass } from '../../store/dataStore'
+import { useDataStore, clsBdg, clsCol, studentInClass, statusBdgCls } from '../../store/dataStore'
 
 function normalizePhone(v: string) {
   return v.replace(/[^\d]/g, '')
@@ -16,14 +16,21 @@ export function ParentListPage() {
   const [tabIdx, setTabIdx] = useState(0)
   const [search, setSearch] = useState('')
   const [showBulkImport, setShowBulkImport] = useState(false)
+  const [statusFilter, setStatusFilter] = useState<'재원중' | '퇴원' | '전체'>('재원중')
 
   const tabs = ['전체', ...classes.map((c) => c.name)]
   const selectedClass = tabIdx === 0 ? null : classes[tabIdx - 1]
 
   const filtered = useMemo(() => students.filter((s) => {
     const matchCls = !selectedClass || studentInClass(s, selectedClass)
+    const matchStatus =
+      statusFilter === '전체'
+        ? true
+        : statusFilter === '퇴원'
+          ? s.status === '퇴원'
+          : s.status !== '퇴원'
     const q = search.trim()
-    if (!q) return matchCls
+    if (!q) return matchCls && matchStatus
     const nq = normalizePhone(q)
     const matchSearch =
       s.name.includes(q)
@@ -34,14 +41,17 @@ export function ParentListPage() {
         normalizePhone(s.parentPhone).includes(nq)
         || (s.phone && normalizePhone(s.phone).includes(nq))
       ))
-    return matchCls && matchSearch
-  }), [students, selectedClass, search])
+    return matchCls && matchStatus && matchSearch
+  }), [students, selectedClass, search, statusFilter])
+
+  const enrolledCount = students.filter((s) => s.status !== '퇴원').length
+  const withdrawnCount = students.filter((s) => s.status === '퇴원').length
 
   return (
     <>
       <TopBar
         title="학생 관리"
-        sub={`총 ${students.length}명`}
+        sub={`재원 ${enrolledCount}명 · 퇴원 ${withdrawnCount}명`}
         right={
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
@@ -69,6 +79,24 @@ export function ParentListPage() {
 
       <div className="page-content-body">
         <div className="sec">
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            {(['재원중', '퇴원', '전체'] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setStatusFilter(f)}
+                style={{
+                  padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 700,
+                  background: statusFilter === f ? 'var(--navy)' : 'var(--bg2)',
+                  color: statusFilter === f ? '#fff' : 'var(--slate2)',
+                  border: statusFilter === f ? 'none' : '0.5px solid var(--border)',
+                  cursor: 'pointer',
+                }}
+              >
+                {f}
+              </button>
+            ))}
+          </div>
           <input
             className="input-field"
             style={{ marginTop: 0, marginBottom: 12 }}
@@ -94,7 +122,10 @@ export function ParentListPage() {
                   <div style={{ flex: 1 }}>
                     <div className="row">
                       <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{s.name}</span>
-                      <Badge cls={clsBdg(s.cls)}>{s.cls}</Badge>
+                      <div style={{ display: 'flex', gap: 4 }}>
+                        <Badge cls={clsBdg(s.cls)}>{s.cls}</Badge>
+                        <Badge cls={statusBdgCls(s)}>{s.status}</Badge>
+                      </div>
                     </div>
                     <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>
                       {s.grade} · 학부모 {s.parentName} ({s.parentPhone})

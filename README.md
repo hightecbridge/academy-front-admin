@@ -42,7 +42,10 @@ src/
 | `/parents/:pid/student/new` | 학생 추가 |
 | `/parents/:pid/student/:sid` | 학생 상세 |
 | `/parents/:pid/student/:sid/edit` | 학생 수정 |
-| `/notice` | 공지사항 |
+| `/consult` | 상담관리 (월별 캘린더·통계·작성) |
+| `/homework` | 숙제관리 |
+| `/grades` | 성적관리 |
+| `/class-notice` | 클래스 알림장 |
 | `/payment` | 수납현황 |
 | `/payment/:sid` | 수납 상세 |
 | `/message` | 메시지 발송 |

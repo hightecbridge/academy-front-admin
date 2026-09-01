@@ -15,6 +15,7 @@ export interface Student {
   kakao: boolean
   reg: string
   status: '재원' | '휴원' | '퇴원'
+  withdrawnAt?: string | null
   fees: {
     tuition: FeeItem
     book: FeeItem
@@ -70,6 +71,7 @@ export interface ClassRoom {
   name: string
   subject: string
   teacher: string
+  teacherUserId?: number
   schedule: string
   capacity: number
   tuitionFee: number
@@ -95,12 +97,22 @@ export interface AttendSheet {
   createdAt: string
 }
 
+export interface NoticeAttachment {
+  id?: number
+  fileName: string
+  contentType?: string
+  sizeBytes?: number
+  data: string
+  sortOrder?: number
+}
+
 export interface NoticeItem {
   id: number
   title: string
   body: string
   targets: string[]   // ['전체'] 또는 ['A반','B반'] 처럼 복수 선택
-  imageUrl?: string   // base64 또는 미리보기 URL
+  imageUrl?: string   // 하위호환: 첫 이미지
+  files?: NoticeAttachment[]
   date: string
   createdAt: string
 }
@@ -141,6 +153,208 @@ export interface HomeworkSheet {
   title: string      // 숙제 제목 (예: '교재 p.34~36 풀기')
   records: HomeworkRecord[]
   createdAt: string
+}
+
+export interface ExamScoreSection {
+  sectionId: number
+  name: string
+  maxScore: number
+  score: number | null
+  percent: number | null
+}
+
+export interface ExamSection {
+  id: number
+  name: string
+  maxScore: number
+  weight?: number
+  sortOrder?: number
+}
+
+export interface ExamClassroom {
+  id: number
+  name: string
+}
+
+export interface ExamClassProgress {
+  classroomId: number
+  classroomName: string
+  entered: number
+  total: number
+  complete: boolean
+  status?: string
+}
+
+export interface ExamScoreRow {
+  studentId: number
+  studentName: string
+  classroomId?: number | null
+  classroomName?: string | null
+  score: number | null
+  comment?: string | null
+  rank?: number | null
+  rankedCount?: number | null
+  sectionScores?: ExamScoreSection[]
+}
+
+export type ExamKind = 'ALL' | 'CLASS'
+
+export interface ExamItem {
+  id: number
+  cid?: number | null
+  classroomName?: string
+  classrooms: ExamClassroom[]
+  kind: ExamKind
+  kindLabel: string
+  targetGrade?: string | null
+  targetLabel?: string
+  progressLabel?: string
+  completedClasses?: number
+  totalClasses?: number
+  classProgress?: ExamClassProgress[]
+  title: string
+  date: string
+  subject?: string
+  maxScore: number
+  participantCount?: number
+  absentCount?: number
+  totalStudents?: number
+  average?: number | null
+  high?: number | null
+  low?: number | null
+  median?: number | null
+  sections?: ExamSection[]
+  scores?: ExamScoreRow[]
+  createdAt: string
+  status?: string
+  statusLabel?: string
+  subjectSummary?: string
+  subjectCount?: number
+  enteredCount?: number
+  closed?: boolean
+}
+
+export interface GradeItem {
+  examId: number
+  title: string
+  date: string
+  subject?: string
+  kind?: ExamKind
+  kindLabel?: string
+  classroomName?: string
+  score: number | null
+  maxScore: number
+  classAvg?: number | null
+  rank?: number | null
+  rankedCount?: number | null
+  delta?: number | null
+  vsClassAvg?: number | null
+  comment?: string | null
+  sectionScores?: ExamScoreSection[]
+}
+
+export interface GradeHistory {
+  studentId: number
+  studentName: string
+  classroomName?: string
+  examCount: number
+  average?: number | null
+  latestDelta?: number | null
+  items: GradeItem[]
+}
+
+export interface ExamStats {
+  examId: number
+  title: string
+  date: string
+  subject?: string
+  kind?: ExamKind
+  kindLabel?: string
+  maxScore: number
+  participantCount?: number
+  totalStudents?: number
+  average?: number | null
+  high?: number | null
+  low?: number | null
+  median?: number | null
+  classrooms: {
+    classroomId: number
+    classroomName: string
+    participantCount: number
+    totalStudents: number
+    average?: number | null
+    high?: number | null
+    low?: number | null
+  }[]
+  distribution?: { label: string; count: number }[]
+  ranking: {
+    studentId: number
+    studentName: string
+    classroomName?: string | null
+    score?: number | null
+    rank?: number | null
+    rankedCount?: number | null
+  }[]
+}
+
+export type ConsultKind = '재원생' | '신규'
+export type ConsultStatus = '대기' | '확정' | '완료' | '취소'
+
+export interface Counselor {
+  id: number
+  name: string
+  role: 'ADMIN' | 'TEACHER' | string
+}
+
+export interface Consultation {
+  id: number
+  kind: ConsultKind
+  studentId?: number | null
+  studentName: string
+  studentStatus?: string | null
+  classroomName?: string | null
+  teacherUserId?: number | null
+  teacherName?: string | null
+  date: string
+  time?: string | null
+  status: ConsultStatus
+  content?: string | null
+  prospectName?: string | null
+  prospectPhone?: string | null
+  prospectGrade?: string | null
+  prospectParentName?: string | null
+  createdAt: string
+}
+
+export interface ConsultWritePayload {
+  kind: ConsultKind
+  date: string
+  time?: string
+  content: string
+  teacherUserId: number
+  status?: ConsultStatus
+  studentId?: number
+  prospectName?: string
+  prospectPhone?: string
+  prospectGrade?: string
+  prospectParentName?: string
+}
+
+export interface DashboardMonthStat {
+  month: number
+  enrolled: number
+  withdrawn: number
+  revenue: number
+  unpaid: number
+}
+
+export interface DashboardStats {
+  year: number
+  yearEnrolled: number
+  yearWithdrawn: number
+  yearRevenue: number
+  yearUnpaid: number
+  months: DashboardMonthStat[]
 }
 
 export type EventCategory = '수업' | '시험' | '휴일' | '행사' | '상담' | '기타'

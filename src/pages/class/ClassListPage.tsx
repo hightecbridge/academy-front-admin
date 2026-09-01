@@ -2,12 +2,14 @@
 import { useNavigate } from 'react-router-dom'
 import { TopBar, Fab } from '../../components/common'
 import { useDataStore, studentInClass } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
 
 export default function ClassListPage() {
   const navigate = useNavigate()
   const classes = useDataStore((s) => s.classes)
   const students = useDataStore((s) => s.students)
-  const allStudents = students
+  const isDirector = useAuthStore((s) => s.user?.role === 'admin')
+  const allStudents = students.filter((s) => s.status !== '퇴원')
 
   return (
     <>
@@ -15,9 +17,11 @@ export default function ClassListPage() {
         title="클래스 관리"
         sub={`총 ${classes.length}개 반`}
         right={
+          isDirector ? (
           <button className="icon-btn" onClick={() => navigate('/class/new')}>
             <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
           </button>
+          ) : undefined
         }
       />
 
@@ -107,7 +111,7 @@ export default function ClassListPage() {
         </div>
 
       </div>
-      <Fab onClick={() => navigate('/class/new')} />
+      {isDirector && <Fab onClick={() => navigate('/class/new')} />}
     </>
   )
 }

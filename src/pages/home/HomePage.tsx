@@ -1,7 +1,12 @@
 // src/pages/home/HomePage.tsx
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, Avatar, Badge, ProgBar } from '../../components/common'
+import { GroupedBarChart, MonthlyStatTable, fmtRevenue } from '../../components/dashboard/DashboardCharts'
 import { useDataStore, totalFee, paidFee, isFullPaid, studentInClass } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
+import { listSelectableYears } from '../../utils/paymentMonth'
+import { isMenuEnabled } from '../../config/menuCatalog'
 
 export default function HomePage() {
   const navigate = useNavigate()
@@ -9,14 +14,38 @@ export default function HomePage() {
   const classes = useDataStore((s) => s.classes)
   const attendSheets = useDataStore((s) => s.attendSheets)
   const events = useDataStore((s) => s.events)
+  const consultations = useDataStore((s) => s.consultations)
+  const dashboardStats = useDataStore((s) => s.dashboardStats)
+  const fetchConsultations = useDataStore((s) => s.fetchConsultations)
+  const fetchDashboardStats = useDataStore((s) => s.fetchDashboardStats)
+  const menuSettings = useAuthStore((s) => s.user?.menuSettings)
+  const showPayment = isMenuEnabled(menuSettings, 'payment')
+  const showAttend = isMenuEnabled(menuSettings, 'attend')
+  const showConsult = isMenuEnabled(menuSettings, 'consult')
+  const showClass = isMenuEnabled(menuSettings, 'class')
+  const showCalendar = isMenuEnabled(menuSettings, 'calendar')
 
-  const allStudents = students
+  const now = new Date()
+  const [year, setYear] = useState(now.getFullYear())
+  const [statsLoading, setStatsLoading] = useState(false)
+  const years = useMemo(() => listSelectableYears(5, 1), [])
+
+  useEffect(() => {
+    void fetchConsultations(now.getFullYear(), now.getMonth() + 1)
+  }, [fetchConsultations])
+
+  useEffect(() => {
+    setStatsLoading(true)
+    void fetchDashboardStats(year).finally(() => setStatsLoading(false))
+  }, [year, fetchDashboardStats])
+
+  const allStudents = students.filter((s) => s.status !== '퇴원')
   const tAmt = allStudents.reduce((a, s) => a + totalFee(s), 0)
   const pAmt = allStudents.reduce((a, s) => a + paidFee(s), 0)
   const unpaidCnt = allStudents.filter((s) => !isFullPaid(s)).length
   const pctTotal = tAmt > 0 ? Math.round((pAmt / tAmt) * 100) : 0
 
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const todayStr = now.toISOString().slice(0, 10)
   const todaySheets = attendSheets.filter((sh) => sh.date === todayStr)
   const todayPresent = todaySheets.reduce((a, sh) => a + sh.records.filter((r) => r.status === '출석').length, 0)
   const todayTotal = todaySheets.reduce((a, sh) => a + sh.records.length, 0)
@@ -41,42 +70,39 @@ export default function HomePage() {
     }
   })
 
-  const consultations = [
-    { sid: 1, name: '김지원', cls: 'A반', time: '3/20 오후 2시' },
-    { sid: 2, name: '박영수', cls: 'B반', time: '3/18 오전 10시' },
-    { sid: 3, name: '이수현', cls: 'C반', time: '3/22 오후 4시' },
-  ]
+  const recentConsults = [...consultations]
+    .sort((a, b) => (b.date + (b.time ?? '')).localeCompare(a.date + (a.time ?? '')))
+    .slice(0, 5)
+
+  const thisMonth = dashboardStats?.months.find((m) => m.month === now.getMonth() + 1 && year === now.getFullYear())
+  const months = dashboardStats?.months ?? Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1, enrolled: 0, withdrawn: 0, revenue: 0, unpaid: 0,
+  }))
 
   return (
     <>
       <TopBar
         title="대시보드"
-        sub="2024년 3월"
-        right={
-          <button className="icon-btn">
-            <svg viewBox="0 0 24 24">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-              <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-          </button>
-        }
+        sub={`${now.getFullYear()}년 ${now.getMonth() + 1}월`}
       />
 
       <div className="page-content-body">
 
-        {/* 통계 카드 */}
         <div className="sec">
           <div className="stat-grid">
             <div className="stat-card">
-              <div className="stat-label">전체 학생</div>
+              <div className="stat-label">재원 학생</div>
               <div className="stat-value">{allStudents.length}</div>
               <div className="stat-sub">{classes.length}개 반</div>
             </div>
+            {showPayment && (
             <div className="stat-card">
               <div className="stat-label">수납률</div>
               <div className="stat-value">{pctTotal}%</div>
               <div className="stat-sub">미납 {unpaidCnt}명</div>
             </div>
+            )}
+            {showAttend && (
             <div className="stat-card" style={{ cursor: 'pointer' }} onClick={() => navigate('/attend')}>
               <div className="stat-label">오늘 출석</div>
               <div className="stat-value" style={{ color: todayAttendRate !== null ? (todayAttendRate >= 80 ? 'var(--ok)' : 'var(--warn)') : 'var(--slate3)' }}>
@@ -84,16 +110,116 @@ export default function HomePage() {
               </div>
               <div className="stat-sub">{todayTotal > 0 ? `${todayPresent}/${todayTotal}명` : '미등록'}</div>
             </div>
+            )}
             <div className="stat-card">
-              <div className="stat-label">등록 학생</div>
-              <div className="stat-value">{allStudents.length}</div>
-              <div className="stat-sub">등록</div>
+              <div className="stat-label">이번달 입회/퇴원</div>
+              <div className="stat-value">
+                {thisMonth ? thisMonth.enrolled : '-'}
+                <span style={{ fontSize: 14, color: 'var(--slate3)', fontWeight: 600 }}> / </span>
+                <span style={{ color: 'var(--err)', fontSize: 20 }}>{thisMonth ? thisMonth.withdrawn : '-'}</span>
+              </div>
+              <div className="stat-sub">입회 / 퇴원</div>
             </div>
           </div>
         </div>
 
-        {/* 반별 수납률 + 최근 상담 */}
+        <div className="sec">
+          <div className="row" style={{ marginBottom: 10 }}>
+            <span className="sec-title" style={{ marginBottom: 0 }}>월별 · 연도별 현황</span>
+            <select
+              className="input-field"
+              value={year}
+              onChange={(e) => setYear(Number(e.target.value))}
+              style={{ width: 110, padding: '6px 10px', fontSize: 13, marginTop: 0 }}
+              aria-label="통계 연도"
+            >
+              {years.map((y) => <option key={y} value={y}>{y}년</option>)}
+            </select>
+          </div>
+
+          {statsLoading && (
+            <div style={{ fontSize: 12, color: 'var(--slate3)', marginBottom: 8 }}>통계를 불러오는 중…</div>
+          )}
+
+          <div className="stat-grid" style={{ marginBottom: 12 }}>
+            <div className="stat-card">
+              <div className="stat-label">{year}년 입회</div>
+              <div className="stat-value" style={{ color: '#6C63FF' }}>{dashboardStats?.yearEnrolled ?? 0}</div>
+              <div className="stat-sub">명</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">{year}년 퇴원</div>
+              <div className="stat-value" style={{ color: 'var(--err)' }}>{dashboardStats?.yearWithdrawn ?? 0}</div>
+              <div className="stat-sub">명</div>
+            </div>
+            {showPayment && (
+            <div className="stat-card">
+              <div className="stat-label">{year}년 매출</div>
+              <div className="stat-value" style={{ fontSize: 18, color: 'var(--ok)' }}>{fmtRevenue(dashboardStats?.yearRevenue ?? 0)}</div>
+              <div className="stat-sub">완납 합계</div>
+            </div>
+            )}
+            {showPayment && (
+            <div className="stat-card">
+              <div className="stat-label">{year}년 미수</div>
+              <div className="stat-value" style={{ fontSize: 18, color: 'var(--err)' }}>{fmtRevenue(dashboardStats?.yearUnpaid ?? 0)}</div>
+              <div className="stat-sub">미납 합계</div>
+            </div>
+            )}
+          </div>
+
+          <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+            <div className="row" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--navy)' }}>수강생 입회 · 퇴원</span>
+              <span style={{ fontSize: 12, color: 'var(--slate2)' }}>
+                순증감 {(dashboardStats?.yearEnrolled ?? 0) - (dashboardStats?.yearWithdrawn ?? 0)}명
+              </span>
+            </div>
+            <GroupedBarChart
+              months={months}
+              aKey="enrolled"
+              bKey="withdrawn"
+              aColor="#6C63FF"
+              bColor="#F04438"
+              aLabel="입회"
+              bLabel="퇴원"
+            />
+          </div>
+
+          {showPayment && (
+          <div className="card" style={{ padding: 16, marginBottom: 12 }}>
+            <div className="row" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--navy)' }}>학원 월별 매출</span>
+              <span
+                style={{ fontSize: 12, color: 'var(--acc)', fontWeight: 700, cursor: 'pointer' }}
+                onClick={() => navigate('/payment')}
+              >
+                수납 관리 →
+              </span>
+            </div>
+            <GroupedBarChart
+              months={months}
+              aKey="revenue"
+              bKey="unpaid"
+              aColor="#0BAB64"
+              bColor="#F79009"
+              aLabel="완납 매출"
+              bLabel="미수금"
+              formatValue={fmtRevenue}
+            />
+          </div>
+          )}
+
+          <div className="card" style={{ padding: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--navy)', margin: '4px 4px 0' }}>
+              {year}년 월별 상세
+            </div>
+            <MonthlyStatTable months={months} year={year} />
+          </div>
+        </div>
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 0 }}>
+          {showPayment && showClass && (
           <div className="sec">
             <div className="row" style={{ marginBottom: 10 }}>
               <span className="sec-title" style={{ marginBottom: 0 }}>반별 수납률</span>
@@ -117,33 +243,43 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+          )}
 
+          {showConsult && (
           <div className="sec">
-            <div className="sec-title">최근 상담 신청</div>
+            <div className="row" style={{ marginBottom: 10 }}>
+              <span className="sec-title" style={{ marginBottom: 0 }}>최근 상담</span>
+              <span style={{ fontSize: 11, color: 'var(--acc)', cursor: 'pointer' }} onClick={() => navigate('/consult')}>상담관리 →</span>
+            </div>
             <div className="card">
-              {consultations.map((c) => {
-                const stu = students.find((x) => x.sid === c.sid)
-                if (!stu) return null
-                return (
-                  <div key={c.sid} className="list-row" onClick={() => navigate(`/parents/${c.sid}`)}>
-                    <Avatar name={stu.parentName} col={stu.col} tc={stu.tc} />
-                    <div style={{ flex: 1 }}>
-                      <div className="row">
-                        <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{c.name}</span>
-                        <Badge cls="badge-amber">대기</Badge>
-                      </div>
-                      <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 2 }}>{c.cls} · {c.time}</div>
+              {recentConsults.length === 0 && (
+                <div style={{ textAlign: 'center', color: 'var(--slate3)', fontSize: 13, padding: '12px 0' }}>이번달 상담 기록이 없습니다</div>
+              )}
+              {recentConsults.map((c) => (
+                <div
+                  key={c.id}
+                  className="list-row"
+                  onClick={() => c.studentId ? navigate(`/parents/${c.studentId}`) : navigate('/consult')}
+                >
+                  <Avatar name={c.studentName} col="#EEF4FF" tc="#1849A9" />
+                  <div style={{ flex: 1 }}>
+                    <div className="row">
+                      <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)' }}>{c.studentName}</span>
+                      <Badge cls={c.kind === '신규' ? 'badge-green' : 'badge-blue'}>{c.kind}</Badge>
                     </div>
-                    <svg style={{ width: 13, height: 13, stroke: 'var(--slate3)', fill: 'none', strokeWidth: 2, strokeLinecap: 'round' }} viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6" /></svg>
+                    <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 2 }}>
+                      {c.date}{c.time ? ` ${c.time}` : ''} · {c.teacherName || '미지정'}
+                    </div>
                   </div>
-                )
-              })}
+                  <svg style={{ width: 13, height: 13, stroke: 'var(--slate3)', fill: 'none', strokeWidth: 2, strokeLinecap: 'round' }} viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6" /></svg>
+                </div>
+              ))}
             </div>
           </div>
+          )}
         </div>
 
-        {/* 다가오는 일정 */}
-        {upcomingEvents.length > 0 && (
+        {showCalendar && upcomingEvents.length > 0 && (
           <div className="sec">
             <div className="row" style={{ marginBottom: 10 }}>
               <span className="sec-title" style={{ marginBottom: 0 }}>다가오는 일정</span>

@@ -9,6 +9,7 @@ import ClassListPage from './pages/class/ClassListPage'
 import ClassDetailPage from './pages/class/ClassDetailPage'
 import ClassFormPage from './pages/class/ClassFormPage'
 import NoticePage from './pages/notice/NoticePage'
+import ClassNoticePage from './pages/notice/ClassNoticePage'
 import PaymentPage from './pages/payment/PaymentPage'
 import PaymentDetailPage from './pages/payment/PaymentDetailPage'
 import PaymentMessagePage from './pages/payment/PaymentMessagePage'
@@ -18,6 +19,10 @@ import AttendListPage from './pages/attend/AttendListPage'
 import AttendSheetPage from './pages/attend/AttendSheetPage'
 import AttendStatsPage from './pages/attend/AttendStatsPage'
 import HomeworkPage from './pages/attend/HomeworkPage'
+import RegularExamPage from './pages/grades/RegularExamPage'
+import DailyExamPage from './pages/grades/DailyExamPage'
+import GradeRedirect from './pages/grades/GradeRedirect'
+import ConsultPage from './pages/consult/ConsultPage'
 import LoginPage from './pages/auth/LoginPage'
 import SignupPage from './pages/auth/SignupPage'
 import ProfilePage from './pages/auth/ProfilePage'
@@ -28,6 +33,7 @@ import PointDeductionHistoryPage from './pages/billing/PointDeductionHistoryPage
 import { useAuthStore } from './store/authStore'
 import { useBillingAccessStore } from './store/billingAccessStore'
 import { showBillingExpiredAlert } from './utils/billingExpiredAlert'
+import { isMenuEnabled, menuKeyForPath } from './config/menuCatalog'
 
 function AuthSplash() {
   return (
@@ -54,7 +60,9 @@ function BillingSplash() {
 /** 체험·구독 만료 등 결제 필요 시 /billing 만 허용하고 나머지 경로는 결제 페이지로 보냄 */
 function BillingGate({ children }: { children: React.ReactNode }) {
   const location = useLocation()
+  const { user } = useAuthStore()
   const { ready, paymentRequired } = useBillingAccessStore()
+  const teacherLocked = paymentRequired && user?.role === 'teacher'
 
   useEffect(() => {
     void useBillingAccessStore.getState().refresh()
@@ -75,8 +83,33 @@ function BillingGate({ children }: { children: React.ReactNode }) {
   }, [ready, paymentRequired, location.pathname])
 
   if (!ready) return <BillingSplash />
+  if (teacherLocked) {
+    if (location.pathname.startsWith('/billing')) {
+      return <Navigate to="/" replace />
+    }
+    return (
+      <div style={{ minHeight: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <div style={{ maxWidth: 360, textAlign: 'center' }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--navy)', marginBottom: 8 }}>이용 기간이 만료되었습니다</div>
+          <div style={{ fontSize: 13, color: 'var(--slate2)', lineHeight: 1.7 }}>
+            학원 이용 요금은 원장님만 결제할 수 있습니다. 원장님께 문의해 주세요.
+          </div>
+        </div>
+      </div>
+    )
+  }
   if (paymentRequired && !location.pathname.startsWith('/billing')) {
     return <Navigate to="/billing" replace />
+  }
+  return <>{children}</>
+}
+
+function MenuGate({ children }: { children: React.ReactNode }) {
+  const location = useLocation()
+  const menuSettings = useAuthStore((s) => s.user?.menuSettings)
+  const key = menuKeyForPath(location.pathname)
+  if (key && !isMenuEnabled(menuSettings, key)) {
+    return <Navigate to="/" replace />
   }
   return <>{children}</>
 }
@@ -105,6 +138,7 @@ export default function App() {
       <Route path="/*" element={
         <PrivateRoute>
           <BillingGate>
+          <MenuGate>
           <Layout>
             <Routes>
               <Route path="/"  element={<HomePage />} />
@@ -126,6 +160,7 @@ export default function App() {
 
               {/* 기타 */}
               <Route path="/notice"          element={<NoticePage />} />
+              <Route path="/class-notice"    element={<ClassNoticePage />} />
               <Route path="/payment"         element={<PaymentPage />} />
               <Route path="/payment/:sid"    element={<PaymentDetailPage />} />
               <Route path="/payment-message" element={<PaymentMessagePage />} />
@@ -134,6 +169,11 @@ export default function App() {
               <Route path="/attend/:cid/:date" element={<AttendSheetPage />} />
               <Route path="/attend/:cid/stats" element={<AttendStatsPage />} />
               <Route path="/homework"         element={<HomeworkPage />} />
+              <Route path="/exams"            element={<GradeRedirect />} />
+              <Route path="/exams/regular"    element={<RegularExamPage />} />
+              <Route path="/exams/daily"      element={<DailyExamPage />} />
+              <Route path="/grades"           element={<GradeRedirect />} />
+              <Route path="/consult"          element={<ConsultPage />} />
               <Route path="/message"         element={<MessagePage />} />
               <Route path="/billing"         element={<BillingPage />} />
               <Route path="/billing/charge" element={<PointChargePage />} />
@@ -144,6 +184,7 @@ export default function App() {
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           </Layout>
+          </MenuGate>
           </BillingGate>
         </PrivateRoute>
       } />

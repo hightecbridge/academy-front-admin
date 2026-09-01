@@ -111,7 +111,20 @@ a { text-decoration: none; color: inherit; }
   .sidebar-nav-item.nav-disabled { opacity: 0.35; cursor: not-allowed; }
   .sidebar-nav-item.nav-disabled:hover { background: transparent; color: rgba(255,255,255,.5); }
   .sidebar-nav-label { font-size: 13px; font-weight: 500; white-space: nowrap; }
-  .sidebar-nav-badge { width: 6px; height: 6px; background: var(--err); border-radius: 50%; margin-left: auto; flex-shrink: 0; }
+  .sidebar-nav-item.sidebar-nav-child {
+    padding-left: 38px;
+    font-size: 12px;
+    margin-left: 0;
+  }
+  .sidebar-nav-item.sidebar-nav-child .sidebar-nav-label {
+    font-size: 12px;
+    white-space: normal;
+    line-height: 1.35;
+  }
+  .sidebar-nav-item.sidebar-nav-child.active::before {
+    top: 8px;
+    bottom: 8px;
+  }
 
   .sidebar-footer {
     padding: 14px 18px; border-top: 1px solid rgba(255,255,255,.07); flex-shrink: 0;

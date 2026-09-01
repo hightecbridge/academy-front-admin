@@ -2,6 +2,7 @@
 import { useState, useRef } from 'react'
 import { TopBar, Fab, useToast, Toast, Badge } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
 import type { CalendarEvent, EventCategory } from '../../types'
 
 const DAY_NAMES = ['일', '월', '화', '수', '목', '금', '토']
@@ -37,6 +38,7 @@ export default function CalendarPage() {
   const updateEvent = useDataStore((s) => s.updateEvent)
   const deleteEvent = useDataStore((s) => s.deleteEvent)
   const classes = useDataStore((s) => s.classes)
+  const isDirector = useAuthStore((s) => s.user?.role === 'admin')
   const { ref: toastRef, show: showToast } = useToast()
 
   const today = new Date()
@@ -622,7 +624,7 @@ export default function CalendarPage() {
         <div style={{ height: 20 }} />
       </div>
 
-      <Fab onClick={() => openNew(selectedDate)} />
+      {isDirector && <Fab onClick={() => openNew(selectedDate)} />}
       <Toast toastRef={toastRef} />
     </>
   )

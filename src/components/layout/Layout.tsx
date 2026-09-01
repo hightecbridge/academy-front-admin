@@ -6,6 +6,7 @@ import { useAuthStore } from '../../store/authStore'
 import { useBillingAccessStore } from '../../store/billingAccessStore'
 import { showBillingExpiredAlert } from '../../utils/billingExpiredAlert'
 import { useDataStore } from '../../store/dataStore'
+import { isMenuEnabled, menuKeyForPath } from '../../config/menuCatalog'
 
 type NavItem = {
   path: string
@@ -13,17 +14,24 @@ type NavItem = {
   mobileLabel?: string
   icon: string
   badge?: boolean
+  children?: { path: string; label: string }[]
 }
 
 const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   { label: '관리', items: [
     { path: '/',         label: '홈',      icon: 'grid' },
     { path: '/parents',  label: '학생관리',   icon: 'people' },
+    { path: '/consult',  label: '상담관리',   icon: 'consult' },
     { path: '/class',    label: '클래스',   icon: 'book' },
     { path: '/notice',   label: '공지사항', icon: 'doc' },
+    { path: '/class-notice', label: '클래스 알림장', mobileLabel: '알림장', icon: 'journal' },
     { path: '/message',  label: '메시지',   icon: 'msg', badge: true },
     { path: '/attend',   label: '출석',    icon: 'check' },
     { path: '/homework', label: '숙제관리', icon: 'hw' },
+    { path: '/exams',    label: '성적관리', icon: 'chart', children: [
+      { path: '/exams/regular', label: '정기고사/모의고사 관리' },
+      { path: '/exams/daily', label: '일일테스트 관리' },
+    ]},
   ]},
   { label: '운영', items: [
     { path: '/calendar', label: '캘린더',   icon: 'cal' },
@@ -34,8 +42,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
     { path: '/billing',  label: '이용요금관리', mobileLabel: '이용요금', icon: 'wallet' },
   ]},
 ]
-const ALL = GROUPS.flatMap(g => g.items)
-const MOBILE_PRIMARY_PATHS = ['/', '/payment', '/payment-message', '/message', '__more__'] as const
+
 
 function navItemActive(pathname: string, itemPath: string): boolean {
   if (itemPath === '/billing/payments') return pathname === '/billing/payments'
@@ -43,6 +50,7 @@ function navItemActive(pathname: string, itemPath: string): boolean {
     return pathname === '/billing' || pathname === '/billing/charge' || pathname === '/billing/payments' || pathname === '/billing/point-deductions'
   }
   if (itemPath === '/') return pathname === '/' || pathname === ''
+  if (itemPath === '/exams') return pathname === '/exams' || pathname.startsWith('/exams/')
   return pathname === itemPath || pathname.startsWith(`${itemPath}/`)
 }
 
@@ -60,6 +68,9 @@ function Icon({ name, active }: { name: string; active: boolean }) {
     msg:    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>,
     wallet: <><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></>,
     receipt: <><path d="M4 2h16v20l-4-2-4 2-4-2-4 2V2z"/><line x1="8" y1="7" x2="16" y2="7"/><line x1="8" y1="11" x2="16" y2="11"/><line x1="8" y1="15" x2="13" y2="15"/></>,
+    consult: <><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="13" y2="12"/></>,
+    journal: <><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/><line x1="10" y1="8" x2="16" y2="8"/><line x1="10" y1="12" x2="16" y2="12"/></>,
+    chart: <><polyline points="4 16 8 10 12 13 16 7 20 11"/><line x1="4" y1="20" x2="20" y2="20"/></>,
     more: <><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></>,
   }
   return <svg viewBox="0 0 24 24" fill="none" stroke={s} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{p[name]}</svg>
@@ -69,9 +80,32 @@ export default function Layout({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
   const { pathname } = useLocation()
   const { user, logout } = useAuthStore()
+  const isDirector = user?.role === 'admin'
+  const groups = GROUPS.map((g) => ({
+    ...g,
+    items: g.items
+      .map((item) => {
+        if (!item.children?.length) return item
+        const children = item.children.filter((child) => {
+          const key = menuKeyForPath(child.path)
+          return !key || isMenuEnabled(user?.menuSettings, key)
+        })
+        return { ...item, children }
+      })
+      .filter((item) => {
+        if (!isDirector && (item.path === '/billing' || item.path === '/message' || item.path === '/payment-message')) {
+          return false
+        }
+        if (item.children) return item.children.length > 0
+        const menuKey = menuKeyForPath(item.path)
+        if (menuKey && !isMenuEnabled(user?.menuSettings, menuKey)) return false
+        return true
+      }),
+  })).filter((g) => g.items.length > 0)
   const billingLocked = useBillingAccessStore((s) => s.paymentRequired)
-  const { fetchClasses, fetchStudents, fetchNotices, fetchEvents } = useDataStore()
+  const { fetchClasses, fetchStudents, fetchNotices, fetchClassNotices, fetchEvents } = useDataStore()
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const [openMenus, setOpenMenus] = useState<Record<string, boolean>>({ '/exams': true })
 
   const goNav = (path: string) => {
     if (billingLocked && !path.startsWith('/billing')) {
@@ -81,14 +115,37 @@ export default function Layout({ children }: { children: ReactNode }) {
     navigate(path)
     setMobileMenuOpen(false)
   }
+  const visibleItems = groups.flatMap((g) => g.items)
+  const preferredPrimary = isDirector
+    ? [
+        { path: '/', label: '홈', icon: 'grid' },
+        { path: '/payment', label: '수납', icon: 'money' },
+        { path: '/payment-message', label: '결제문자', icon: 'receipt' },
+        { path: '/message', label: '메시지', icon: 'msg', badge: true },
+      ]
+    : [
+        { path: '/', label: '홈', icon: 'grid' },
+        { path: '/parents', label: '학생', icon: 'people' },
+        { path: '/class', label: '클래스', icon: 'book' },
+        { path: '/attend', label: '출석', icon: 'check' },
+      ]
+  const visiblePathSet = new Set(visibleItems.map((item) => item.path).concat('/'))
+  const filledPrimary = preferredPrimary.filter((item) => visiblePathSet.has(item.path))
+  for (const item of visibleItems) {
+    if (filledPrimary.length >= 4) break
+    if (!filledPrimary.some((p) => p.path === item.path)) {
+      filledPrimary.push({ path: item.path, label: item.mobileLabel ?? item.label, icon: item.icon, badge: item.badge })
+    }
+  }
   const mobilePrimaryItems: NavItem[] = [
-    { path: '/', label: '홈', icon: 'grid' },
-    { path: '/payment', label: '수납', icon: 'money' },
-    { path: '/payment-message', label: '결제문자', icon: 'receipt' },
-    { path: '/message', label: '메시지', icon: 'msg', badge: true },
+    ...filledPrimary.slice(0, 4),
     { path: '__more__', label: '더보기', icon: 'more' },
   ]
-  const mobileSecondaryItems = ALL.filter((item) => !MOBILE_PRIMARY_PATHS.includes(item.path as (typeof MOBILE_PRIMARY_PATHS)[number]))
+  const mobileSecondaryItems = visibleItems.flatMap((item) => (
+    item.children?.length
+      ? item.children.map((c) => ({ ...item, path: c.path, label: c.label, children: undefined }))
+      : [item]
+  )).filter((item) => !mobilePrimaryItems.some((p) => p.path === item.path))
 
   // 결제 잠금 중에는 목록 API 호출 생략 · 결제 완료 후 잠금 해제되면 로드
   useEffect(() => {
@@ -96,8 +153,9 @@ export default function Layout({ children }: { children: ReactNode }) {
     void fetchClasses()
     void fetchStudents()
     void fetchNotices()
+    void fetchClassNotices()
     void fetchEvents()
-  }, [billingLocked, fetchClasses, fetchStudents, fetchNotices, fetchEvents])
+  }, [billingLocked, fetchClasses, fetchStudents, fetchNotices, fetchClassNotices, fetchEvents])
 
   const handleLogout = () => {
     if (window.confirm('로그아웃 하시겠습니까?')) {
@@ -126,22 +184,42 @@ export default function Layout({ children }: { children: ReactNode }) {
 
         {/* 네비게이션 */}
         <nav className="sidebar-nav">
-          {GROUPS.map(g => (
+          {groups.map(g => (
             <div key={g.label}>
               <div className="sidebar-section-label">{g.label}</div>
               {g.items.map(item => {
                 const active = navItemActive(pathname, item.path)
                 const disabled = billingLocked && !item.path.startsWith('/billing')
+                const expanded = !!(item.children && (openMenus[item.path] || active))
                 return (
-                  <div
-                    key={item.path}
-                    className={`sidebar-nav-item${active ? ' active' : ''}${disabled ? ' nav-disabled' : ''}`}
-                    onClick={() => goNav(item.path)}
-                    title={disabled ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : undefined}
-                  >
-                    <Icon name={item.icon} active={active}/>
-                    <span className="sidebar-nav-label">{item.label}</span>
-                    {item.badge && <div className="sidebar-nav-badge"/>}
+                  <div key={item.path}>
+                    <div
+                      className={`sidebar-nav-item${active ? ' active' : ''}${disabled ? ' nav-disabled' : ''}`}
+                      onClick={() => {
+                        if (item.children?.length) {
+                          setOpenMenus((prev) => ({ ...prev, [item.path]: !expanded }))
+                          return
+                        }
+                        goNav(item.path)
+                      }}
+                      title={disabled ? '이용 기간 만료 — 결제 후 이용할 수 있습니다' : undefined}
+                    >
+                      <Icon name={item.icon} active={active}/>
+                      <span className="sidebar-nav-label">{item.label}</span>
+                      {item.badge && <div className="sidebar-nav-badge"/>}
+                    </div>
+                    {expanded && item.children?.map((child) => {
+                      const childActive = pathname === child.path || pathname.startsWith(`${child.path}/`)
+                      return (
+                        <div
+                          key={child.path}
+                          className={`sidebar-nav-item sidebar-nav-child${childActive ? ' active' : ''}${disabled ? ' nav-disabled' : ''}`}
+                          onClick={() => goNav(child.path)}
+                        >
+                          <span className="sidebar-nav-label">{child.label}</span>
+                        </div>
+                      )
+                    })}
                   </div>
                 )
               })}

@@ -1,9 +1,39 @@
 // src/pages/notice/NoticePage.tsx
 import React, { useEffect, useState, useRef } from 'react'
-import { TopBar, TabBar, Badge, Fab, useToast, Toast } from '../../components/common'
+import { TopBar, TabBar, Fab, useToast, Toast } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
+import type { NoticeAttachment } from '../../types'
 
 type View = 'list' | 'write' | 'detail'
+
+const MAX_FILES = 10
+const MAX_FILE_BYTES = 5 * 1024 * 1024
+
+type DraftFile = NoticeAttachment & { localId: string }
+
+function isImageFile(f: { contentType?: string; fileName?: string; data?: string }) {
+  if (f.contentType?.startsWith('image/')) return true
+  if (f.data?.startsWith('data:image/')) return true
+  const name = (f.fileName ?? '').toLowerCase()
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(name)
+}
+
+function fmtSize(bytes?: number) {
+  if (bytes == null) return ''
+  if (bytes < 1024) return `${bytes}B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)}KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('파일 읽기 실패'))
+    reader.readAsDataURL(file)
+  })
+}
 
 export default function NoticePage() {
   const classes = useDataStore((s) => s.classes)
@@ -12,6 +42,7 @@ export default function NoticePage() {
   const addNotice = useDataStore((s) => s.addNotice)
   const deleteNotice = useDataStore((s) => s.deleteNotice)
   const fetchNotices = useDataStore((s) => s.fetchNotices)
+  const isDirector = useAuthStore((s) => s.user?.role === 'admin')
   const { ref: toastRef, show: showToast } = useToast()
 
   const [view, setView] = useState<View>('list')
@@ -21,7 +52,6 @@ export default function NoticePage() {
   const PAGE_SIZE = 10
   const [pageIdx, setPageIdx] = useState(0)
 
-  // 공지 페이지 진입 시 DB 기준으로 항상 최신 목록 재조회
   useEffect(() => {
     ;(async () => {
       try {
@@ -32,16 +62,10 @@ export default function NoticePage() {
     })()
   }, [fetchNotices, pageIdx, tabIdx, q])
 
-  useEffect(() => {
-    console.log('[front] NoticePage notices length changed =>', notices.length)
-  }, [notices.length])
-
-  // 작성 폼 상태
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [targets, setTargets] = useState<string[]>(['전체'])
-  const [imagePreview, setImagePreview] = useState<string | null>(null)
-  const [imageFile, setImageFile] = useState<File | null>(null)
+  const [draftFiles, setDraftFiles] = useState<DraftFile[]>([])
   const [isSaving, setIsSaving] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
@@ -52,12 +76,10 @@ export default function NoticePage() {
   const pageItems = filtered
 
   useEffect(() => {
-    // 페이지 수가 줄어드는 경우(삭제 등) 현재 pageIdx를 범위 내로 보정
     if (pageIdx !== safePageIdx) setPageIdx(safePageIdx)
   }, [safePageIdx])
 
   useEffect(() => {
-    // 탭/검색이 바뀌면(클라이언트 필터) 1페이지로 리셋하고, 다음 fetch는 pageIdx 변경으로 트리거
     setPageIdx(0)
   }, [tabIdx, q])
 
@@ -73,7 +95,6 @@ export default function NoticePage() {
     return 'badge-gray'
   }
 
-  // 반 대상 토글 (중복 선택 가능)
   const toggleTarget = (name: string) => {
     if (name === '전체') {
       setTargets(['전체'])
@@ -89,33 +110,81 @@ export default function NoticePage() {
     })
   }
 
-  // 이미지 선택
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    if (file.size > 5 * 1024 * 1024) {
-      alert('5MB 이하 이미지만 첨부 가능합니다.')
+  const resetWriteForm = () => {
+    setTitle('')
+    setBody('')
+    setTargets(['전체'])
+    setDraftFiles([])
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const handleFilesSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const picked = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    if (picked.length === 0) return
+
+    const remain = MAX_FILES - draftFiles.length
+    if (remain <= 0) {
+      alert(`첨부파일은 최대 ${MAX_FILES}개까지 등록할 수 있습니다.`)
       return
     }
-    setImageFile(file)
-    const reader = new FileReader()
-    reader.onload = (ev) => setImagePreview(ev.target?.result as string)
-    reader.readAsDataURL(file)
+
+    const accepted = picked.slice(0, remain)
+    if (picked.length > remain) {
+      alert(`최대 ${MAX_FILES}개까지 첨부할 수 있어 ${accepted.length}개만 추가합니다.`)
+    }
+
+    const next: DraftFile[] = []
+    for (const file of accepted) {
+      if (file.size > MAX_FILE_BYTES) {
+        alert(`"${file.name}"은(는) 5MB를 초과해 제외되었습니다.`)
+        continue
+      }
+      try {
+        const data = await readFileAsDataUrl(file)
+        next.push({
+          localId: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          fileName: file.name,
+          contentType: file.type || undefined,
+          sizeBytes: file.size,
+          data,
+        })
+      } catch {
+        alert(`"${file.name}" 읽기에 실패했습니다.`)
+      }
+    }
+    if (next.length > 0) setDraftFiles((prev) => [...prev, ...next].slice(0, MAX_FILES))
+  }
+
+  const removeDraft = (localId: string) => {
+    setDraftFiles((prev) => prev.filter((f) => f.localId !== localId))
   }
 
   const handleWrite = async () => {
     if (isSaving) return
     if (!title.trim()) { alert('제목을 입력하세요.'); return }
     if (!body.trim()) { alert('내용을 입력하세요.'); return }
+    if (draftFiles.length > MAX_FILES) {
+      alert(`첨부파일은 최대 ${MAX_FILES}개까지 등록할 수 있습니다.`)
+      return
+    }
     try {
       setIsSaving(true)
+      const files = draftFiles.map((f, i) => ({
+        fileName: f.fileName,
+        contentType: f.contentType,
+        sizeBytes: f.sizeBytes,
+        data: f.data,
+        sortOrder: i,
+      }))
+      const firstImage = files.find((f) => isImageFile(f))
       await addNotice({
         title, body, targets,
-        imageUrl: imagePreview ?? undefined,
+        files,
+        imageUrl: firstImage?.data,
         date: new Date().toISOString().slice(0, 10),
       })
-      setTitle(''); setBody(''); setTargets(['전체'])
-      setImagePreview(null); setImageFile(null)
+      resetWriteForm()
       setView('list')
       showToast('공지사항이 등록되었습니다.')
     } catch (e: unknown) {
@@ -129,17 +198,21 @@ export default function NoticePage() {
 
   const openDetail = (id: number) => { setDetailId(id); setView('detail') }
   const detailNotice = notices.find((n) => n.id === detailId)
+  const detailFiles = detailNotice?.files?.length
+    ? detailNotice.files
+    : (detailNotice?.imageUrl
+      ? [{ fileName: 'image', contentType: 'image/*', data: detailNotice.imageUrl }]
+      : [])
 
-  // ── 공지 작성 화면 ──────────────────────────────────────
   if (view === 'write') {
     return (
       <>
         <TopBar
           title="공지 작성"
-          onBack={() => setView('list')}
+          onBack={() => { resetWriteForm(); setView('list') }}
           right={
             <button
-              onClick={handleWrite}
+              onClick={() => void handleWrite()}
               disabled={isSaving}
               style={{
                 fontSize: 13, fontWeight: 600, padding: '6px 14px',
@@ -154,8 +227,6 @@ export default function NoticePage() {
         />
         <div className="page-content-body">
           <div className="sec">
-
-            {/* 대상 반 선택 — 중복 선택 */}
             <div className="sec-title">발송 대상 (중복 선택 가능)</div>
             <div className="chip-row" style={{ marginTop: 0 }}>
               <div
@@ -174,7 +245,6 @@ export default function NoticePage() {
                 </div>
               ))}
             </div>
-            {/* 선택된 대상 미리보기 */}
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 10 }}>
               {targets.map((t) => (
                 <span key={t} className={`badge ${clsBadge(t)}`}>{t}</span>
@@ -184,7 +254,6 @@ export default function NoticePage() {
 
             <div className="divider" />
 
-            {/* 제목 */}
             <label className="input-label" style={{ marginTop: 0 }}>제목 *</label>
             <input
               className="input-field"
@@ -197,7 +266,6 @@ export default function NoticePage() {
               {title.length}/100
             </div>
 
-            {/* 내용 */}
             <label className="input-label">내용 *</label>
             <textarea
               className="input-field"
@@ -211,44 +279,71 @@ export default function NoticePage() {
               {body.length}/1000
             </div>
 
-            {/* 이미지 첨부 */}
-            <label className="input-label">이미지 첨부 (선택)</label>
+            <label className="input-label">파일 첨부 (최대 {MAX_FILES}개)</label>
             <input
               ref={fileRef}
               type="file"
-              accept="image/*"
+              multiple
+              accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.hwp,.hwpx,.txt,.zip"
               style={{ display: 'none' }}
-              onChange={handleImageSelect}
+              onChange={(e) => void handleFilesSelect(e)}
             />
 
-            {imagePreview ? (
-              <div style={{ marginTop: 8, position: 'relative' }}>
-                <img
-                  src={imagePreview}
-                  alt="첨부 이미지"
-                  style={{
-                    width: '100%', borderRadius: 10, border: '0.5px solid var(--border)',
-                    maxHeight: 200, objectFit: 'cover',
-                  }}
-                />
-                <button
-                  onClick={() => { setImagePreview(null); setImageFile(null); if (fileRef.current) fileRef.current.value = '' }}
-                  style={{
-                    position: 'absolute', top: 8, right: 8,
-                    width: 26, height: 26, borderRadius: '50%',
-                    background: 'rgba(0,0,0,0.55)', border: 'none',
-                    color: '#fff', fontSize: 14, cursor: 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  }}
-                >
-                  ×
-                </button>
-                <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 4 }}>
-                  {imageFile?.name} · {imageFile ? (imageFile.size / 1024).toFixed(0) : 0}KB
-                </div>
+            {draftFiles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
+                {draftFiles.map((f) => (
+                  <div
+                    key={f.localId}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '10px 12px', borderRadius: 10,
+                      border: '1px solid var(--border)', background: 'var(--bg1)',
+                    }}
+                  >
+                    {isImageFile(f) ? (
+                      <img
+                        src={f.data}
+                        alt=""
+                        style={{ width: 44, height: 44, borderRadius: 8, objectFit: 'cover', flexShrink: 0 }}
+                      />
+                    ) : (
+                      <div style={{
+                        width: 44, height: 44, borderRadius: 8, flexShrink: 0,
+                        background: 'var(--bg2)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 11, fontWeight: 800, color: 'var(--slate2)',
+                      }}>
+                        FILE
+                      </div>
+                    )}
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 13, fontWeight: 600, color: 'var(--navy)',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {f.fileName}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 2 }}>
+                        {fmtSize(f.sizeBytes)}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeDraft(f.localId)}
+                      style={{
+                        width: 28, height: 28, borderRadius: 8, border: 'none',
+                        background: 'var(--bg2)', color: 'var(--err)', fontWeight: 800, cursor: 'pointer',
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
               </div>
-            ) : (
+            )}
+
+            {draftFiles.length < MAX_FILES ? (
               <button
+                type="button"
                 onClick={() => fileRef.current?.click()}
                 style={{
                   marginTop: 8, width: '100%', padding: '14px 0',
@@ -259,18 +354,25 @@ export default function NoticePage() {
                 }}
               >
                 <svg style={{ width: 24, height: 24, stroke: 'var(--slate3)', fill: 'none', strokeWidth: 1.5, strokeLinecap: 'round' }} viewBox="0 0 24 24">
-                  <rect x="3" y="3" width="18" height="18" rx="3" />
-                  <circle cx="8.5" cy="8.5" r="1.5" />
-                  <polyline points="21 15 16 10 5 21" />
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="12" y1="18" x2="12" y2="12" />
+                  <line x1="9" y1="15" x2="15" y2="15" />
                 </svg>
-                <span style={{ fontSize: 13, color: 'var(--slate3)' }}>이미지 선택 (최대 5MB)</span>
+                <span style={{ fontSize: 13, color: 'var(--slate3)' }}>
+                  파일 추가 ({draftFiles.length}/{MAX_FILES}) · 개당 최대 5MB
+                </span>
               </button>
+            ) : (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--slate2)', textAlign: 'center' }}>
+                첨부 한도 {MAX_FILES}개에 도달했습니다.
+              </div>
             )}
 
-            <button className="btn-primary" onClick={handleWrite} disabled={isSaving} style={{ opacity: isSaving ? 0.6 : 1 }}>
+            <button className="btn-primary" onClick={() => void handleWrite()} disabled={isSaving} style={{ opacity: isSaving ? 0.6 : 1 }}>
               {isSaving ? '등록 중...' : '공지 등록하기'}
             </button>
-            <button className="btn-secondary" onClick={() => setView('list')}>취소</button>
+            <button className="btn-secondary" onClick={() => { resetWriteForm(); setView('list') }}>취소</button>
           </div>
         </div>
         <Toast toastRef={toastRef} />
@@ -278,7 +380,6 @@ export default function NoticePage() {
     )
   }
 
-  // ── 공지 상세 화면 ──────────────────────────────────────
   if (view === 'detail' && detailNotice) {
     return (
       <>
@@ -290,8 +391,8 @@ export default function NoticePage() {
               className="icon-btn"
               onClick={() => {
                 if (window.confirm('이 공지사항을 삭제하시겠습니까?')) {
-                  deleteNotice(detailNotice.id)
-                  fetchNotices()
+                  void deleteNotice(detailNotice.id)
+                  void fetchNotices()
                   setView('list')
                   showToast('삭제되었습니다.')
                 }
@@ -306,31 +407,60 @@ export default function NoticePage() {
         />
         <div className="page-content-body">
           <div className="sec">
-            {/* 대상 뱃지 */}
             <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 10 }}>
               {detailNotice.targets.map((t) => (
                 <span key={t} className={`badge ${clsBadge(t)}`}>{t}</span>
               ))}
               <span style={{ fontSize: 11, color: 'var(--slate3)', alignSelf: 'center' }}>· {detailNotice.date}</span>
             </div>
-            {/* 제목 */}
             <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--navy)', marginBottom: 12, lineHeight: 1.4 }}>
               {detailNotice.title}
             </div>
-            {/* 내용 */}
             <div style={{
               fontSize: 14, color: 'var(--slate)', lineHeight: 1.8,
               whiteSpace: 'pre-wrap', marginBottom: 16,
             }}>
               {detailNotice.body}
             </div>
-            {/* 이미지 */}
-            {detailNotice.imageUrl && (
-              <img
-                src={detailNotice.imageUrl}
-                alt="공지 이미지"
-                style={{ width: '100%', borderRadius: 10, border: '0.5px solid var(--border)' }}
-              />
+
+            {detailFiles.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>
+                  첨부파일 {detailFiles.length}개
+                </div>
+                {detailFiles.map((f, i) => (
+                  <div key={f.id ?? `${f.fileName}-${i}`}>
+                    {isImageFile(f) ? (
+                      <img
+                        src={f.data}
+                        alt={f.fileName}
+                        style={{ width: '100%', borderRadius: 10, border: '0.5px solid var(--border)' }}
+                      />
+                    ) : (
+                      <a
+                        href={f.data}
+                        download={f.fileName}
+                        style={{
+                          display: 'flex', alignItems: 'center', gap: 10,
+                          padding: '12px 14px', borderRadius: 10,
+                          border: '1px solid var(--border)', background: 'var(--bg1)',
+                          textDecoration: 'none', color: 'var(--navy)',
+                        }}
+                      >
+                        <span style={{
+                          width: 36, height: 36, borderRadius: 8, background: 'var(--acc2)',
+                          color: 'var(--acc)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontSize: 11, fontWeight: 800,
+                        }}>
+                          FILE
+                        </span>
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{f.fileName}</span>
+                        <span style={{ fontSize: 11, color: 'var(--slate3)' }}>{fmtSize(f.sizeBytes)}</span>
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -339,13 +469,12 @@ export default function NoticePage() {
     )
   }
 
-  // ── 공지 목록 화면 ──────────────────────────────────────
   return (
     <>
       <TopBar title="공지사항" sub={`총 ${noticeTotal}건`} />
       <TabBar tabs={tabs} active={tabIdx} onChange={setTabIdx} />
-      
-        <div className="page-content-body">
+
+      <div className="page-content-body">
         <div className="sec">
           <input
             className="input-field"
@@ -359,45 +488,52 @@ export default function NoticePage() {
               {noticeTotal === 0 ? '공지사항이 없습니다' : '현재 페이지에 표시할 공지가 없습니다'}
             </div>
           )}
-          {pageItems.map((n) => (
-            <div
-              key={n.id}
-              className="card"
-              style={{ marginBottom: 8, cursor: 'pointer' }}
-              onClick={() => openDetail(n.id)}
-            >
-              {/* 이미지 썸네일 */}
-              {n.imageUrl && (
-                <img
-                  src={n.imageUrl}
-                  alt=""
-                  style={{
-                    width: '100%', height: 120, objectFit: 'cover',
-                    borderRadius: '14px 14px 0 0',
-                  }}
-                />
-              )}
-              <div style={{ padding: '13px 16px' }}>
-                {/* 대상 뱃지 + 날짜 */}
-                <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 7, alignItems: 'center' }}>
-                  {n.targets.map((t) => (
-                    <span key={t} className={`badge ${clsBadge(t)}`} style={{ fontSize: 10 }}>{t}</span>
-                  ))}
-                  <span style={{ fontSize: 11, color: 'var(--slate3)', marginLeft: 'auto' }}>{n.date}</span>
-                </div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)', marginBottom: 5, lineHeight: 1.4 }}>
-                  {n.title}
-                </div>
-                <div style={{
-                  fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6,
-                  overflow: 'hidden', display: '-webkit-box',
-                  WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
-                }}>
-                  {n.body}
+          {pageItems.map((n) => {
+            const files = n.files?.length
+              ? n.files
+              : (n.imageUrl ? [{ fileName: 'image', data: n.imageUrl, contentType: 'image/*' }] : [])
+            const thumb = files.find((f) => isImageFile(f))
+            return (
+              <div
+                key={n.id}
+                className="card"
+                style={{ marginBottom: 8, cursor: 'pointer' }}
+                onClick={() => openDetail(n.id)}
+              >
+                {thumb?.data && (
+                  <img
+                    src={thumb.data}
+                    alt=""
+                    style={{
+                      width: '100%', height: 120, objectFit: 'cover',
+                      borderRadius: '14px 14px 0 0',
+                    }}
+                  />
+                )}
+                <div style={{ padding: '13px 16px' }}>
+                  <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 7, alignItems: 'center' }}>
+                    {n.targets.map((t) => (
+                      <span key={t} className={`badge ${clsBadge(t)}`} style={{ fontSize: 10 }}>{t}</span>
+                    ))}
+                    {files.length > 0 && (
+                      <span className="badge badge-gray" style={{ fontSize: 10 }}>첨부 {files.length}</span>
+                    )}
+                    <span style={{ fontSize: 11, color: 'var(--slate3)', marginLeft: 'auto' }}>{n.date}</span>
+                  </div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--navy)', marginBottom: 5, lineHeight: 1.4 }}>
+                    {n.title}
+                  </div>
+                  <div style={{
+                    fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6,
+                    overflow: 'hidden', display: '-webkit-box',
+                    WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                  }}>
+                    {n.body}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
 
           {noticeTotal > 0 && totalPages > 1 && (
             <div style={{ display: 'flex', justifyContent: 'center', gap: 8, marginTop: 14, alignItems: 'center' }}>
@@ -473,7 +609,7 @@ export default function NoticePage() {
           )}
         </div>
       </div>
-      <Fab onClick={() => { setTitle(''); setBody(''); setTargets(['전체']); setImagePreview(null); setView('write') }} />
+      {isDirector && <Fab onClick={() => { resetWriteForm(); setView('write') }} />}
       <Toast toastRef={toastRef} />
     </>
   )

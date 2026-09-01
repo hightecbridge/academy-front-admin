@@ -3,6 +3,8 @@ import React, { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { TopBar, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useAuthStore } from '../../store/authStore'
+import TeacherManagePanel from './TeacherManagePanel'
+import MenuManagePanel from './MenuManagePanel'
 
 function formatCreatedAt(value?: string) {
   if (!value) return ''
@@ -126,7 +128,8 @@ export default function ProfilePage() {
   const { user, updateProfile, changePassword } = useAuthStore()
   const { ref: toastRef, show: showToast } = useToast()
 
-  const [tab, setTab] = useState<'info' | 'academy' | 'password'>('info')
+  const isDirector = user?.role === 'admin'
+  const [tab, setTab] = useState<'info' | 'academy' | 'teachers' | 'menus' | 'password'>('info')
 
   // 기본 정보
   const [name, setName]     = useState(user?.name ?? '')
@@ -207,7 +210,11 @@ export default function ProfilePage() {
 
   const TABS = [
     { key: 'info',     label: '기본 정보', icon: '👤' },
-    { key: 'academy',  label: '학원 정보', icon: '🏫' },
+    ...(isDirector ? [
+      { key: 'academy' as const,  label: '학원 정보', icon: '🏫' },
+      { key: 'teachers' as const, label: '교사 관리', icon: '👩‍🏫' },
+      { key: 'menus' as const,    label: '메뉴 관리', icon: '☰' },
+    ] : []),
     { key: 'password', label: '비밀번호',  icon: '🔒' },
   ] as const
 
@@ -218,6 +225,7 @@ export default function ProfilePage() {
 
       <div className="page-content-body">
 
+        {isDirector && (
         <div className="sec" style={{ marginBottom: 8 }}>
           <button
             type="button"
@@ -229,6 +237,7 @@ export default function ProfilePage() {
             <span style={{ color: 'var(--acc)', fontWeight: 700 }}>이용요금관리 →</span>
           </button>
         </div>
+        )}
 
         {/* 프로필 헤더 */}
         <div className="sec">
@@ -270,17 +279,17 @@ export default function ProfilePage() {
         </div>
 
         {/* 탭 */}
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 0, background: 'var(--bg1)', borderRadius: '12px 12px 0 0', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', borderBottom: '1px solid var(--border)', marginBottom: 0, background: 'var(--bg1)', borderRadius: '12px 12px 0 0', overflow: 'hidden' }}>
           {TABS.map(t => (
             <button
               key={t.key}
-              onClick={() => setTab(t.key)}
+              onClick={() => setTab(t.key as typeof tab)}
               style={{
                 flex: 1, padding: '12px 8px', border: 'none', cursor: 'pointer', background: 'none',
                 borderBottom: tab === t.key ? '2.5px solid var(--acc)' : '2.5px solid transparent',
                 color: tab === t.key ? 'var(--acc)' : 'var(--slate2)',
                 fontWeight: tab === t.key ? 700 : 400,
-                fontSize: 13, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
+                fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5,
               }}
             >
               <span style={{ fontSize: 14 }}>{t.icon}</span>
@@ -306,10 +315,12 @@ export default function ProfilePage() {
               <label style={s.label}>이름 *</label>
               <input className="input-field" value={name} onChange={e => setName(e.target.value)} placeholder="홍길동" />
 
-              <label style={s.label}>이메일</label>
+              <label style={s.label}>로그인 아이디</label>
               <input className="input-field" value={user.email} disabled
                 style={{ opacity: 0.55, cursor: 'not-allowed' }} />
-              <p style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 4 }}>이메일은 변경할 수 없습니다.</p>
+              <p style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 4 }}>
+                {isDirector ? '이메일은 변경할 수 없습니다.' : '교사 아이디는 원장님이 관리합니다.'}
+              </p>
 
               <label style={s.label}>연락처</label>
               <input className="input-field" type="tel" value={phone} onChange={e => setPhone(e.target.value)} placeholder="010-0000-0000" />
@@ -395,6 +406,15 @@ export default function ProfilePage() {
             </div>
           )}
 
+          {/* ── 탭: 교사 관리 ── */}
+          {tab === 'teachers' && isDirector && (
+            <TeacherManagePanel onToast={showToast} />
+          )}
+
+          {tab === 'menus' && isDirector && (
+            <MenuManagePanel onToast={showToast} />
+          )}
+
           {/* ── 탭: 비밀번호 ── */}
           {tab === 'password' && (
             <div>
@@ -427,7 +447,7 @@ export default function ProfilePage() {
 
         </div>
 
-        {/* 계정 삭제 */}
+        {isDirector && (
         <div className="sec" style={{ paddingTop: 0 }}>
           <div style={{ background: 'var(--bg1)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--slate)', marginBottom: 4 }}>계정 탈퇴</div>
@@ -443,6 +463,7 @@ export default function ProfilePage() {
             </button>
           </div>
         </div>
+        )}
 
       </div>
       <Toast toastRef={toastRef} />

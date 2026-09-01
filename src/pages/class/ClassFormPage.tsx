@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb } from '../../components/common'
 import { useDataStore } from '../../store/dataStore'
+import client from '../../api/client'
 
 const COLOR_PRESETS = [
   { color: '#DBEAFE', textColor: '#1D4ED8', label: '파랑' },
@@ -27,6 +28,8 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const [name, setName] = useState(existing?.name ?? '')
   const [subject, setSubject] = useState(existing?.subject ?? '')
   const [teacher, setTeacher] = useState(existing?.teacher ?? '')
+  const [teacherUserId, setTeacherUserId] = useState<number | ''>(existing?.teacherUserId ?? '')
+  const [teacherAccounts, setTeacherAccounts] = useState<{ id: number; name: string; loginId: string }[]>([])
   const [schedule, setSchedule] = useState(existing?.schedule ?? '')
   const [capacity, setCapacity] = useState(String(existing?.capacity ?? 15))
   const [tuitionFee, setTuitionFee] = useState(String(existing?.tuitionFee ?? 280000))
@@ -36,10 +39,18 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
+    void client.get('/admin/teachers').then((res) => {
+      const rows = (res.data.data ?? []) as { id: number; name: string; loginId: string }[]
+      setTeacherAccounts(rows)
+    }).catch(() => setTeacherAccounts([]))
+  }, [])
+
+  useEffect(() => {
     if (mode !== 'edit' || !existing) return
     setName(existing.name)
     setSubject(existing.subject)
     setTeacher(existing.teacher)
+    setTeacherUserId(existing.teacherUserId ?? '')
     setSchedule(existing.schedule)
     setCapacity(String(existing.capacity))
     setTuitionFee(String(existing.tuitionFee))
@@ -56,6 +67,7 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
 
     const payload = {
       name: name.trim(), subject, teacher, schedule,
+      teacherUserId: teacherUserId === '' ? undefined : Number(teacherUserId),
       capacity: Number(capacity),
       tuitionFee: Number(tuitionFee),
       bookFee: Number(bookFee),
@@ -172,11 +184,34 @@ export default function ClassFormPage({ mode }: { mode: 'add' | 'edit' }) {
           />
 
           <label className="input-label">담당 교사 *</label>
+          {teacherAccounts.length > 0 && (
+            <select
+              className="input-field"
+              value={teacherUserId}
+              onChange={(e) => {
+                const v = e.target.value
+                if (!v) {
+                  setTeacherUserId('')
+                  return
+                }
+                const id = Number(v)
+                setTeacherUserId(id)
+                const acc = teacherAccounts.find((t) => t.id === id)
+                if (acc) setTeacher(acc.name)
+              }}
+              style={{ marginBottom: 8 }}
+            >
+              <option value="">직접 입력</option>
+              {teacherAccounts.map((t) => (
+                <option key={t.id} value={t.id}>{t.name} ({t.loginId})</option>
+              ))}
+            </select>
+          )}
           <input
             className="input-field"
             placeholder="예) 이수진"
             value={teacher}
-            onChange={(e) => setTeacher(e.target.value)}
+            onChange={(e) => { setTeacher(e.target.value); setTeacherUserId('') }}
           />
 
           <label className="input-label">수업 일정 *</label>
