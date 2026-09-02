@@ -14,7 +14,7 @@ interface BillingSummary {
 /** 결제 금액(원, VAT 포함) = 적립 포인트(P) 1:1 */
 const CHARGE_AMOUNTS_KRW = [5_000, 10_000, 20_000, 30_000] as const
 
-/** 결제위젯 SDK는 위젯 연동 클라이언트 키(test_gck_...)만 지원. API 개별 키(test_ck_...)는 사용 불가. */
+/** 결제위젯 SDK는 위젯 연동 클라이언트 키(test_gck_ / live_gck_)만 지원. API 개별 키(test_ck_ / live_ck_)는 사용 불가. */
 function pointChargeWidgetClientKey(): string | undefined {
   const widget = (import.meta.env.VITE_TOSS_PAYMENTS_WIDGET_CLIENT_KEY as string | undefined)?.trim()
   if (widget) return widget
@@ -57,13 +57,20 @@ export default function PointChargePage() {
     })()
   }, [])
 
-  const finalizeCharge = async (chargedPoints: number, orderId?: string | null) => {
+  const finalizeCharge = async (chargedPoints: number, orderId?: string | null, paymentKey?: string | null) => {
     setBusy(true)
     try {
+      if (!orderId || !paymentKey) {
+        setErr('결제 승인 정보(paymentKey)가 없어 포인트를 적립하지 못했습니다. 결제를 다시 진행해 주세요.')
+        setBusy(false)
+        processingRef.current = false
+        return
+      }
       const res = await client.post('/admin/billing/points/charge', {
         points: chargedPoints,
-        orderId: orderId || undefined,
-      })
+        orderId,
+        paymentKey,
+      }, { timeout: 30000 })
       const summary = (res.data as { data: BillingSummary }).data
       void useBillingAccessStore.getState().refresh()
       navigate('/billing/payments', {
@@ -73,7 +80,7 @@ export default function PointChargePage() {
             type: 'points' as const,
             pointsAdded: chargedPoints,
             newBalance: summary.smsPoints,
-            orderId: orderId ?? undefined,
+            orderId,
           },
         },
       })
@@ -81,6 +88,7 @@ export default function PointChargePage() {
       const ax = e as { response?: { data?: { message?: string } } }
       setErr(ax.response?.data?.message ?? '포인트 충전에 실패했습니다.')
       setBusy(false)
+      processingRef.current = false
     }
   }
 
@@ -89,8 +97,8 @@ export default function PointChargePage() {
     if (!tossWidgetClientKey) {
       const msg =
         '포인트 결제(결제위젯)에는 위젯 연동 클라이언트 키가 필요합니다. '
-        + '환경변수 VITE_TOSS_PAYMENTS_WIDGET_CLIENT_KEY에 test_gck_로 시작하는 키를 설정해 주세요. '
-        + '(API 개별 연동 키 test_ck_는 결제위젯에서 지원하지 않습니다.)'
+        + '환경변수 VITE_TOSS_PAYMENTS_WIDGET_CLIENT_KEY에 test_gck_ 또는 live_gck_로 시작하는 키를 설정해 주세요. '
+        + '(API 개별 연동 키 test_ck_ / live_ck_ 는 결제위젯에서 지원하지 않습니다.)'
       setErr(msg)
       window.alert(msg)
       return
@@ -99,19 +107,25 @@ export default function PointChargePage() {
     setErr('')
     try {
       setBusy(true)
-      const orderId = `POINT-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-      const orderName = `하이아카데미 포인트 ${fmtKrw(n)}원`
-      const successUrl = `${window.location.origin}/billing/charge?toss=success&amount=${n}&orderId=${encodeURIComponent(orderId)}`
+      const prepared = await client.post('/admin/billing/points/prepare', { points: n })
+      const order = (prepared.data as { data: { orderId: string; amount: number; orderName: string } }).data
+      const successUrl = `${window.location.origin}/billing/charge?toss=success`
       const failUrl = `${window.location.origin}/billing/charge?toss=fail`
 
       /** 카드 결제창 직호출 없이 항상 결제위젯(토스페이먼츠 UI)에서 진행 */
-      setWidgetPayload({ amount: n, orderId, orderName, successUrl, failUrl })
+      setWidgetPayload({
+        amount: order.amount,
+        orderId: order.orderId,
+        orderName: order.orderName,
+        successUrl,
+        failUrl,
+      })
       setWidgetRenderKey((v) => v + 1)
       setWidgetReady(false)
       setWidgetOpen(true)
     } catch (e: unknown) {
-      const ex = e as { message?: string }
-      const msg = ex?.message ?? '결제 준비 중 문제가 발생했습니다.'
+      const ax = e as { response?: { data?: { message?: string } }; message?: string }
+      const msg = ax.response?.data?.message ?? ax.message ?? '결제 준비 중 문제가 발생했습니다.'
       setErr(msg)
       window.alert(msg)
     } finally {
@@ -179,12 +193,14 @@ export default function PointChargePage() {
 
     const amountRaw = searchParams.get('amount')
     const amount = amountRaw ? Number(amountRaw) : NaN
-    if (!Number.isFinite(amount) || amount <= 0) {
+    const orderId = searchParams.get('orderId')
+    const paymentKey = searchParams.get('paymentKey')
+    if (!Number.isFinite(amount) || amount <= 0 || !orderId || !paymentKey) {
       setErr('결제 성공 정보를 확인할 수 없어 포인트 적립을 진행하지 못했습니다.')
       return
     }
     processingRef.current = true
-    void finalizeCharge(amount, searchParams.get('orderId'))
+    void finalizeCharge(amount, orderId, paymentKey)
   }, [searchParams])
 
   return (
@@ -251,7 +267,7 @@ export default function PointChargePage() {
               {busy ? '처리 중…' : `${fmtKrw(selectedKrw)}원 결제하기`}
             </button>
             <p style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 10 }}>
-              위젯에서 결제 수단을 선택한 뒤 「결제하기」로 진행합니다. 완료 후 이 페이지로 돌아오면 포인트가 적립됩니다.
+              위젯에서 결제 수단을 선택한 뒤 「결제하기」로 진행합니다. 결제 승인이 완료되면 포인트가 적립됩니다.
             </p>
           </div>
         </div>
