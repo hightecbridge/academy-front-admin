@@ -64,7 +64,7 @@ export default function SignupPage() {
   )
 
   return (
-    <div style={s.page}>
+    <div className="auth-page" style={s.page}>
       <div style={s.bgDeco} />
 
       <div style={s.container}>
@@ -273,13 +273,21 @@ const inp = (err?: string): React.CSSProperties => ({
 
 const s: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh', background: 'var(--bg2)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    padding: '24px 16px', position: 'relative', overflow: 'hidden',
+    minHeight: '100dvh',
+    width: '100%',
+    maxWidth: '100%',
+    background: 'var(--bg2)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    position: 'relative',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
   },
   bgDeco: {
-    position: 'absolute', top: -150, right: -100,
-    width: 500, height: 500, borderRadius: '50%',
+    position: 'absolute', top: '-20%', right: '-22%',
+    width: '75%', maxWidth: 280, aspectRatio: '1', borderRadius: '50%',
     background: 'radial-gradient(circle, rgba(108,99,255,0.1) 0%, transparent 70%)',
     pointerEvents: 'none',
   },

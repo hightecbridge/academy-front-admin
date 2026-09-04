@@ -32,7 +32,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={styles.page}>
+    <div className="auth-page" style={styles.page}>
       {/* 배경 장식 */}
       <div style={styles.bgCircle1} />
       <div style={styles.bgCircle2} />
@@ -174,24 +174,27 @@ export default function LoginPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   page: {
-    minHeight: '100vh',
+    minHeight: '100dvh',
+    width: '100%',
+    maxWidth: '100%',
     background: 'var(--bg2)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '24px 16px',
     position: 'relative',
-    overflow: 'hidden',
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    boxSizing: 'border-box',
   },
   bgCircle1: {
-    position: 'absolute', top: -120, right: -80,
-    width: 400, height: 400, borderRadius: '50%',
+    position: 'absolute', top: '-18%', right: '-18%',
+    width: '70%', maxWidth: 280, aspectRatio: '1', borderRadius: '50%',
     background: 'radial-gradient(circle, rgba(108,99,255,0.12) 0%, transparent 70%)',
     pointerEvents: 'none',
   },
   bgCircle2: {
-    position: 'absolute', bottom: -100, left: -100,
-    width: 350, height: 350, borderRadius: '50%',
+    position: 'absolute', bottom: '-16%', left: '-20%',
+    width: '65%', maxWidth: 240, aspectRatio: '1', borderRadius: '50%',
     background: 'radial-gradient(circle, rgba(167,139,250,0.1) 0%, transparent 70%)',
     pointerEvents: 'none',
   },

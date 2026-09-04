@@ -218,7 +218,7 @@ export default function HomePage() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 0 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 0 }}>
           {showPayment && showClass && (
           <div className="sec">
             <div className="row" style={{ marginBottom: 10 }}>

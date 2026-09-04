@@ -37,7 +37,7 @@ import { isMenuEnabled, menuKeyForPath } from './config/menuCatalog'
 
 function AuthSplash() {
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg2)' }}>
+    <div style={{ minHeight: '100dvh', width: '100%', maxWidth: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg2)' }}>
       <div style={{ color: 'var(--slate2)', fontSize: 14 }}>세션 확인 중…</div>
     </div>
   )
@@ -51,7 +51,7 @@ function PrivateRoute({ children }: { children: React.ReactNode }) {
 
 function BillingSplash() {
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg2)' }}>
+    <div style={{ minHeight: '100dvh', width: '100%', maxWidth: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg2)' }}>
       <div style={{ color: 'var(--slate2)', fontSize: 14 }}>이용 요금 확인 중…</div>
     </div>
   )
