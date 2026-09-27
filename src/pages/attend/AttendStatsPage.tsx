@@ -1,14 +1,13 @@
 // src/pages/attend/AttendStatsPage.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, TabBar, ProgBar } from '../../components/common'
 import { useDataStore, studentInClass } from '../../store/dataStore'
+import { useAuthStore } from '../../store/authStore'
 import type { AttendStatus } from '../../types'
+import { buildYearMonth, currentYearMonth, parseYearMonth } from '../../utils/paymentMonth'
+import { classSheetsForMonth, shouldSkipAttend, studentMonthAttendStats } from '../../utils/attendHoliday'
 
-const STATUS_COLOR: Record<AttendStatus, string> = {
-  출석: 'var(--ok)', 지각: 'var(--warn)', 조퇴: 'var(--warn)',
-  결석: 'var(--err)', 공결: 'var(--slate3)',
-}
 const STATUS_BG: Record<AttendStatus, string> = {
   출석: 'var(--ok2)', 지각: 'var(--warn2)', 조퇴: 'var(--warn2)',
   결석: 'var(--err2)', 공결: 'var(--bg3)',
@@ -24,29 +23,40 @@ export default function AttendStatsPage() {
   const classes = useDataStore((s) => s.classes)
   const students = useDataStore((s) => s.students)
   const attendSheets = useDataStore((s) => s.attendSheets)
+  const events = useDataStore((s) => s.events)
+  const fetchAttend = useDataStore((s) => s.fetchAttend)
+  const fetchEvents = useDataStore((s) => s.fetchEvents)
+  const excludeHolidays = !!useAuthStore((s) => s.user?.excludeHolidaysFromAttend)
+  const refreshAttendSettings = useAuthStore((s) => s.refreshAttendSettings)
   const [period, setPeriod] = useState<'month' | 'all'>('month')
+  const [yearMonth, setYearMonth] = useState(currentYearMonth)
   const [sortBy, setSortBy] = useState<'name' | 'rate'>('name')
 
   const cls = classes.find((c) => c.cid === Number(cid))
   const allStudents = students
   const stuInClass = cls ? allStudents.filter((s) => studentInClass(s, cls)) : []
-  const today = new Date()
-  const ym = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`
+  const { year, month } = parseYearMonth(yearMonth)
+  const ym = `${year}-${String(month).padStart(2, '0')}`
 
-  const sheets = attendSheets
-    .filter((sh) => sh.cid === Number(cid))
-    .filter((sh) => period === 'month' ? sh.date.startsWith(ym) : true)
+  useEffect(() => {
+    void refreshAttendSettings()
+    void fetchEvents()
+  }, [refreshAttendSettings, fetchEvents])
+
+  useEffect(() => {
+    if (!cid) return
+    void fetchAttend(Number(cid))
+  }, [cid, fetchAttend])
+
+  const sheets = !cls ? [] : period === 'month'
+    ? classSheetsForMonth(attendSheets, cls.cid, ym, excludeHolidays, events, cls.name)
+    : attendSheets.filter((sh) => sh.cid === cls.cid && !shouldSkipAttend(sh.date, excludeHolidays, events, cls.name))
 
   if (!cls) return <div className="sec">반 정보를 찾을 수 없습니다.</div>
 
   const stuStats = stuInClass.map((stu) => {
-    const totalSessions = sheets.length
-    const present  = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && r.status === '출석')).length
-    const late     = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && (r.status === '지각' || r.status === '조퇴'))).length
-    const absent   = sheets.filter((sh) => sh.records.find((r) => r.sid === stu.sid && (r.status === '결석' || r.status === '공결'))).length
-    const noRecord = totalSessions - present - late - absent
-    const rate = totalSessions > 0 ? Math.round((present / totalSessions) * 100) : 0
-    return { ...stu, totalSessions, present, late, absent, noRecord, rate }
+    const stats = studentMonthAttendStats(stu, sheets)
+    return { ...stu, ...stats, totalSessions: stats.classDays }
   })
 
   const sorted = [...stuStats].sort((a, b) =>
@@ -63,6 +73,11 @@ export default function AttendStatsPage() {
     .reverse()
 
   const DAY = ['일','월','화','수','목','금','토']
+  const shiftMonth = (delta: number) => {
+    const d = new Date(year, month - 1 + delta, 1)
+    setYearMonth(buildYearMonth(d.getFullYear(), d.getMonth() + 1))
+    setPeriod('month')
+  }
 
   return (
     <>
@@ -76,25 +91,33 @@ export default function AttendStatsPage() {
         { label: `${cls.name} 통계` },
       ]} />
       <TabBar
-        tabs={['이번달', '전체 기간']}
+        tabs={['월별', '전체 기간']}
         active={period === 'month' ? 0 : 1}
         onChange={(i) => setPeriod(i === 0 ? 'month' : 'all')}
       />
 
-      {/* ── 콘텐츠 ── */}
       <div className="page-content-body">
+        {period === 'month' && (
+          <div className="sec">
+            <div className="card" style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <button className="icon-btn" onClick={() => shiftMonth(-1)} aria-label="이전 달">‹</button>
+              <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>{year}년 {month}월</div>
+              <button className="icon-btn" onClick={() => shiftMonth(1)} aria-label="다음 달">›</button>
+            </div>
+          </div>
+        )}
 
-        {/* 전체 요약 */}
         <div className="sec">
           <div style={{ background: cls.color, borderRadius: 12, padding: '14px 16px' }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: cls.textColor, marginBottom: 10 }}>
-              {period === 'month' ? `${today.getMonth() + 1}월` : '전체'} 출석 현황 — {sheets.length}회 수업
+              {period === 'month' ? `${month}월` : '전체'} 출석 현황 — 수업 {sheets.length}일
+              {excludeHolidays ? ' · 공휴일 제외' : ''}
             </div>
             <div style={{ display: 'flex', gap: 16 }}>
               {[
                 { label: '평균 출석률', value: `${avgRate}%` },
                 { label: '등록 학생',   value: `${stuInClass.length}명` },
-                { label: '수업 횟수',   value: `${sheets.length}회` },
+                { label: '수업일수',   value: `${sheets.length}일` },
               ].map(({ label, value }) => (
                 <div key={label} style={{ flex: 1, textAlign: 'center' }}>
                   <div style={{ fontSize: 22, fontWeight: 700, color: cls.textColor }}>{value}</div>
@@ -105,7 +128,6 @@ export default function AttendStatsPage() {
           </div>
         </div>
 
-        {/* 최근 수업별 출석률 */}
         {recentSheets.length > 0 && (
           <div className="sec">
             <div className="sec-title">최근 수업별 출석률</div>
@@ -114,7 +136,7 @@ export default function AttendStatsPage() {
                 const presentN = sh.records.filter((r) => r.status === '출석').length
                 const totalN = stuInClass.length
                 const pct = totalN > 0 ? Math.round((presentN / totalN) * 100) : 0
-                const dObj = new Date(sh.date)
+                const dObj = new Date(`${sh.date}T00:00:00`)
                 return (
                   <div key={sh.id} style={{ marginBottom: 10, cursor: 'pointer' }}
                     onClick={() => navigate(`/attend/${cls.cid}/${sh.date}`)}>
@@ -134,10 +156,11 @@ export default function AttendStatsPage() {
           </div>
         )}
 
-        {/* 학생별 통계 */}
         <div className="sec">
           <div className="row" style={{ marginBottom: 10 }}>
-            <span className="sec-title" style={{ marginBottom: 0 }}>학생별 출석 현황</span>
+            <span className="sec-title" style={{ marginBottom: 0 }}>
+              학생별 {period === 'month' ? `${month}월` : '전체'} 출석·결석
+            </span>
             <div style={{ display: 'flex', gap: 6 }}>
               {[['이름순', 'name'], ['출석률순', 'rate']].map(([label, key]) => (
                 <button key={key} onClick={() => setSortBy(key as 'name' | 'rate')}
@@ -156,14 +179,42 @@ export default function AttendStatsPage() {
 
           {sheets.length === 0 && (
             <div style={{ textAlign: 'center', padding: '28px 0', color: 'var(--slate3)', fontSize: 13 }}>
-              {period === 'month' ? '이번달' : '전체 기간'} 출석 기록이 없습니다.
+              {period === 'month' ? `${month}월` : '전체 기간'} 출석 기록이 없습니다.
+            </div>
+          )}
+
+          {sorted.length > 0 && (
+            <div className="card" style={{ overflow: 'hidden', marginBottom: 12 }}>
+              <div style={{
+                display: 'grid', gridTemplateColumns: '1fr 58px 64px 64px 52px',
+                padding: '10px 14px', fontSize: 11, fontWeight: 700, color: 'var(--slate2)',
+                background: 'var(--bg2)', borderBottom: '1px solid var(--border)',
+              }}>
+                <span>학생</span>
+                <span style={{ textAlign: 'right' }}>수업</span>
+                <span style={{ textAlign: 'right' }}>출석일</span>
+                <span style={{ textAlign: 'right' }}>결석일</span>
+                <span style={{ textAlign: 'right' }}>출석률</span>
+              </div>
+              {sorted.map((stu) => (
+                <div key={stu.sid} style={{
+                  display: 'grid', gridTemplateColumns: '1fr 58px 64px 64px 52px',
+                  padding: '11px 14px', fontSize: 13, borderBottom: '1px solid var(--border)',
+                  alignItems: 'center',
+                }}>
+                  <span style={{ fontWeight: 600, color: 'var(--navy)' }}>{stu.name}</span>
+                  <span style={{ textAlign: 'right', color: 'var(--slate2)' }}>{stu.classDays}</span>
+                  <span style={{ textAlign: 'right', fontWeight: 700, color: 'var(--ok)' }}>{stu.present}</span>
+                  <span style={{ textAlign: 'right', fontWeight: 700, color: stu.absent > 0 ? 'var(--err)' : 'var(--slate2)' }}>{stu.absent}</span>
+                  <span style={{ textAlign: 'right', fontWeight: 700, color: stu.rate >= 80 ? 'var(--ok)' : stu.rate >= 60 ? 'var(--warn)' : 'var(--err)' }}>{stu.rate}%</span>
+                </div>
+              ))}
             </div>
           )}
 
           {sorted.map((stu) => (
             <div key={stu.sid} className="card" style={{ marginBottom: 8 }}>
               <div style={{ padding: '13px 14px' }}>
-                {/* 이름 + 출석률 */}
                 <div className="row" style={{ marginBottom: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                     <div className="avatar" style={{ background: stu.col, color: stu.tc, width: 34, height: 34, fontSize: 13 }}>
@@ -178,19 +229,16 @@ export default function AttendStatsPage() {
                     <div style={{ fontSize: 18, fontWeight: 700, color: stu.rate >= 80 ? 'var(--ok)' : stu.rate >= 60 ? 'var(--warn)' : 'var(--err)' }}>
                       {stu.rate}%
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--slate3)' }}>{stu.present}/{stu.totalSessions}회</div>
+                    <div style={{ fontSize: 11, color: 'var(--slate3)' }}>출석 {stu.present} / 수업 {stu.classDays}일</div>
                   </div>
                 </div>
 
-                {/* 출석 비율 바 */}
                 <div style={{ display: 'flex', gap: 2, height: 6, borderRadius: 3, overflow: 'hidden', marginBottom: 8 }}>
                   {stu.present  > 0 && <div style={{ flex: stu.present,  background: 'var(--ok)'     }} />}
                   {stu.late     > 0 && <div style={{ flex: stu.late,     background: 'var(--warn)'   }} />}
                   {stu.absent   > 0 && <div style={{ flex: stu.absent,   background: 'var(--err)'    }} />}
-                  {stu.noRecord > 0 && <div style={{ flex: stu.noRecord, background: 'var(--bg3)'    }} />}
                 </div>
 
-                {/* 상세 수치 뱃지 */}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   {([
                     { label: '출석', cnt: stu.present  },
@@ -201,7 +249,7 @@ export default function AttendStatsPage() {
                       display: 'flex', alignItems: 'center', gap: 4,
                       background: STATUS_BG[label], borderRadius: 6, padding: '3px 8px',
                     }}>
-                      <span style={{ fontSize: 11, color: STATUS_TC[label] }}>{label}</span>
+                      <span style={{ fontSize: 11, color: STATUS_TC[label] }}>{label === '출석' ? '출석일수' : label === '결석' ? '결석일수' : label}</span>
                       <span style={{ fontSize: 12, fontWeight: 700, color: STATUS_TC[label] }}>{cnt}</span>
                     </div>
                   ))}
@@ -220,7 +268,7 @@ export default function AttendStatsPage() {
           ))}
         </div>
 
-      </div>{/* /page-content-body */}
+      </div>
     </>
   )
 }

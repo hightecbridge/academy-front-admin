@@ -7,6 +7,7 @@ import type { ExamItem, ExamKind, ExamScoreRow, ExamScoreSection, ExamSection, E
 import { VALID_GRADES } from '../../utils/parentBulkImport'
 import { downloadExamScoreTemplate, parseExamScoreExcel } from '../../utils/examExcel'
 import { periodRange, ymd, type PeriodPreset } from '../../utils/examPeriod'
+import { downloadElementPng } from '../../utils/downloadPng'
 import {
   closeRegularExam,
   createRegularExam,
@@ -155,8 +156,8 @@ function deltaLabel(d: number | null | undefined) {
 }
 
 const BAR = {
-  examAvg: { label: '내 평균', color: '#64748B' },
-  classAvg: { label: '시험평균', color: 'var(--acc)' },
+  examAvg: { label: '전체평균', color: '#64748B' },
+  classAvg: { label: '반평균', color: 'var(--acc)' },
   mine: { label: '내 점수', color: 'var(--ok)' },
 } as const
 
@@ -177,7 +178,65 @@ function barHeight(value: number | null | undefined, max: number, chartH: number
   return Math.max(8, Math.round((value / max) * chartH))
 }
 
-/** 시험평균 · 반평균 · 내 점수 3개 막대 */
+function ImageSaveButton({
+  getTarget,
+  filename,
+  onError,
+  label = '이미지 저장',
+}: {
+  getTarget: () => HTMLElement | null
+  filename: string
+  onError: (msg: string) => void
+  label?: string
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      type="button"
+      data-skip-capture=""
+      className="btn-secondary"
+      disabled={busy}
+      onClick={() => {
+        void (async () => {
+          const el = getTarget()
+          if (!el) return
+          setBusy(true)
+          try {
+            await downloadElementPng(el, filename)
+          } catch {
+            onError('이미지 저장에 실패했습니다.')
+          } finally {
+            setBusy(false)
+          }
+        })()
+      }}
+      style={{ width: 'auto', padding: '5px 10px', fontSize: 12, fontWeight: 700, marginTop: 0, flexShrink: 0 }}
+    >
+      {busy ? '저장 중...' : label}
+    </button>
+  )
+}
+
+function SecHead({
+  title,
+  getTarget,
+  filename,
+  onError,
+}: {
+  title: string
+  getTarget: () => HTMLElement | null
+  filename: string
+  onError: (msg: string) => void
+}) {
+  return (
+    <div className="sec-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+      <span>{title}</span>
+      <ImageSaveButton getTarget={getTarget} filename={filename} onError={onError} />
+    </div>
+  )
+}
+
+/** 전체평균 · 반평균 · 내 점수 3개 막대 */
 function ThreeScoreBars({
   examAvg,
   classAvg,
@@ -255,18 +314,16 @@ function ScoreBars({
   )
 }
 
-/** 시험별로 시험평균·반평균·내 점수를 묶어서 표시 */
+/** 시험별로 전체평균·반평균·내 점수를 묶어서 표시 */
 function ExamCompareBars({
   exams,
-  studentAvg,
 }: {
-  exams: { key: string; label: string; sub?: string; myScore: number | null; classAvg: number | null; maxScore: number }[]
-  studentAvg: number | null
+  exams: { key: string; label: string; sub?: string; myScore: number | null; examAvg: number | null; classAvg: number | null; maxScore: number }[]
 }) {
   if (exams.length === 0) {
     return <div style={{ fontSize: 13, color: 'var(--slate3)', padding: '12px 0' }}>데이터가 없습니다.</div>
   }
-  const max = Math.max(1, studentAvg ?? 0, ...exams.flatMap((e) => [e.maxScore, e.myScore ?? 0, e.classAvg ?? 0]))
+  const max = Math.max(1, ...exams.flatMap((e) => [e.maxScore, e.myScore ?? 0, e.examAvg ?? 0, e.classAvg ?? 0]))
   const chartH = 110
   return (
     <div>
@@ -276,7 +333,7 @@ function ExamCompareBars({
           <div key={ex.key} style={{ flex: '1 0 72px', minWidth: 72, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
             <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: chartH + 22, width: '100%', justifyContent: 'center' }}>
               {[
-                { ...BAR.examAvg, value: studentAvg },
+                { ...BAR.examAvg, value: ex.examAvg },
                 { ...BAR.classAvg, value: ex.classAvg },
                 { ...BAR.mine, value: ex.myScore },
               ].map((b) => (
@@ -335,14 +392,14 @@ function TrendLine({
     <svg viewBox={`0 0 ${w} ${h}`} width="100%" height={h} style={{ overflow: 'visible' }}>
       {[0.25, 0.5, 0.75, 1].map((t) => (
         <line key={t} x1={pad.l} x2={w - pad.r} y1={pad.t + innerH * (1 - t)} y2={pad.t + innerH * (1 - t)}
-          stroke="var(--bg3)" strokeWidth={1} />
+            stroke="#EFEDFF" strokeWidth={1} />
       ))}
-      {d && <path d={d} fill="none" stroke="var(--acc)" strokeWidth={2.4} />}
+      {d && <path d={d} fill="none" stroke="#6C63FF" strokeWidth={2.4} />}
       {taken.map((p) => (
-        <circle key={p.key} cx={p.x} cy={p.y} r={4} fill="var(--acc)" />
+        <circle key={p.key} cx={p.x} cy={p.y} r={4} fill="#6C63FF" />
       ))}
       {points.map((p, i) => (
-        <text key={p.key} x={xs[i]} y={h - 8} textAnchor="middle" fontSize={10} fill="var(--slate3)">
+        <text key={p.key} x={xs[i]} y={h - 8} textAnchor="middle" fontSize={10} fill="#9E9CB8">
           {p.label}
         </text>
       ))}
@@ -400,6 +457,14 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
   const [calendarDays, setCalendarDays] = useState<DailyCalendarDay[]>([])
   const [dailyClassId, setDailyClassId] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const statsCaptureRef = useRef<HTMLDivElement>(null)
+  const studentTrendRef = useRef<HTMLDivElement>(null)
+  const studentCompareRef = useRef<HTMLDivElement>(null)
+  const studentExamBarsRef = useRef<HTMLDivElement>(null)
+  const studentSubjectRef = useRef<HTMLDivElement>(null)
+  const classAvgRef = useRef<HTMLDivElement>(null)
+  const distRef = useRef<HTMLDivElement>(null)
+  const rankingRef = useRef<HTMLDivElement>(null)
 
   const pageTitle = mode === 'regular' ? '정기고사/모의고사 관리' : '일일테스트 관리'
   const detail = examId != null
@@ -1178,8 +1243,6 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
     const dlt = deltaLabel(history.latestDelta)
     const chrono = [...history.items].slice().reverse()
     const latest = history.items[0]
-    const classAvgs = history.items.map((it) => it.classAvg).filter((v): v is number => v != null)
-    const classAvg = classAvgs.length > 0 ? Math.round((classAvgs.reduce((a, b) => a + b, 0) / classAvgs.length) * 10) / 10 : null
     const latestMax = latest?.maxScore ?? 100
     return (
       <>
@@ -1191,18 +1254,28 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
         <div className="page-content-body">
           <div className="sec">
             <div style={{ display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#64748B' }}>{fmtScore(latest?.examAvg)}</div>
+                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>전체평균</div>
+              </div>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--acc2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--acc)' }}>{fmtScore(history.average)}</div>
-                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>평균 ({history.examCount}회)</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--acc)' }}>{fmtScore(latest?.classAvg)}</div>
+                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내가 속한 반평균</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 18, fontWeight: 800, color: dlt?.color ?? 'var(--navy)' }}>{dlt?.text ?? '—'}</div>
-                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>직전 시험 대비</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--ok)' }}>{fmtScore(latest?.score)}</div>
+                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내 점수</div>
+                {dlt && <div style={{ fontSize: 11, fontWeight: 700, color: dlt.color, marginTop: 4 }}>{dlt.text}</div>}
               </div>
             </div>
           </div>
-          <div className="sec">
-            <div className="sec-title">회차별 추이</div>
+          <div className="sec" ref={studentTrendRef}>
+            <SecHead
+              title="회차별 추이"
+              getTarget={() => studentTrendRef.current}
+              filename={`${history.studentName}_회차별추이`}
+              onError={showToast}
+            />
             <div className="card" style={{ padding: 14 }}>
               <TrendLine points={chrono.map((it) => ({
                 key: String(it.examId),
@@ -1212,27 +1285,80 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
               }))} />
             </div>
           </div>
-          <div className="sec">
-            <div className="sec-title">점수 비교</div>
+          <div className="sec" ref={studentCompareRef}>
+            <SecHead
+              title="점수 비교"
+              getTarget={() => studentCompareRef.current}
+              filename={`${history.studentName}_점수비교`}
+              onError={showToast}
+            />
             <div className="card" style={{ padding: 14 }}>
+              <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
+                {latest && (
+                  <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--navy)' }}>{latest.title}</div>
+                )}
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)', marginTop: latest ? 6 : 0 }}>
+                  {[latest?.classroomName || history.classroomName, history.studentName].filter(Boolean).join(' · ') || history.studentName}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--slate)', marginTop: 6 }}>
+                  {latest?.rank != null && latest?.rankedCount != null
+                    ? `전체 ${latest.rankedCount}명 중 ${latest.rank}등`
+                    : '전체 등수 —'}
+                  {' · '}
+                  {latest?.classRank != null && latest?.classRankedCount != null
+                    ? `해당 반 ${latest.classRankedCount}명 중 ${latest.classRank}등`
+                    : '해당 반 등수 —'}
+                </div>
+              </div>
               <ThreeScoreBars
-                examAvg={history.average ?? null}
-                classAvg={classAvg}
+                examAvg={latest?.examAvg ?? null}
+                classAvg={latest?.classAvg ?? null}
                 myScore={latest?.score ?? null}
                 maxScore={latestMax}
               />
             </div>
           </div>
-          <div className="sec">
-            <div className="sec-title">시험별 비교</div>
+          {(latest?.sectionScores?.length ?? 0) > 0 && (
+            <div className="sec" ref={studentSubjectRef}>
+              <SecHead
+                title="과목별 점수 비교"
+                getTarget={() => studentSubjectRef.current}
+                filename={`${history.studentName}_과목별점수비교`}
+                onError={showToast}
+              />
+              <div className="card" style={{ padding: 14 }}>
+                {latest && (
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)', marginBottom: 10 }}>{latest.title}</div>
+                )}
+                <ExamCompareBars
+                  exams={(latest?.sectionScores ?? []).map((sec) => ({
+                    key: String(sec.sectionId),
+                    label: sec.name,
+                    sub: `만점 ${sec.maxScore}`,
+                    myScore: sec.score,
+                    examAvg: sec.examAvg ?? null,
+                    classAvg: sec.classAvg ?? null,
+                    maxScore: sec.maxScore,
+                  }))}
+                />
+              </div>
+            </div>
+          )}
+          <div className="sec" ref={studentExamBarsRef}>
+            <SecHead
+              title="시험별 비교"
+              getTarget={() => studentExamBarsRef.current}
+              filename={`${history.studentName}_시험별비교`}
+              onError={showToast}
+            />
             <div className="card" style={{ padding: 14 }}>
               <ExamCompareBars
-                studentAvg={history.average ?? null}
                 exams={chrono.map((it) => ({
                   key: String(it.examId),
                   label: it.date.slice(5),
                   sub: it.title.length > 6 ? `${it.title.slice(0, 6)}…` : it.title,
                   myScore: it.score,
+                  examAvg: it.examAvg ?? null,
                   classAvg: it.classAvg ?? null,
                   maxScore: it.maxScore,
                 }))}
@@ -1268,7 +1394,8 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--slate2)' }}>
                         {it.rank != null ? `${it.rank}등 / ${it.rankedCount}명` : '미응시'}
-                        {it.classAvg != null ? ` · 시험평균 ${fmtScore(it.classAvg)}` : ''}
+                        {it.examAvg != null ? ` · 전체평균 ${fmtScore(it.examAvg)}` : ''}
+                        {it.classAvg != null ? ` · 반평균 ${fmtScore(it.classAvg)}` : ''}
                       </div>
                       {dd && <div style={{ fontSize: 11, fontWeight: 700, color: dd.color }}>{dd.text}</div>}
                     </div>
@@ -1374,6 +1501,15 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
             </div>
             {stats && (
               <>
+                <div className="sec" style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <ImageSaveButton
+                    getTarget={() => statsCaptureRef.current}
+                    filename={`${stats.title}_통계`}
+                    onError={showToast}
+                    label="전체 통계 이미지 저장"
+                  />
+                </div>
+                <div ref={statsCaptureRef}>
                 <div className="sec">
                   <div style={{ background: 'var(--acc2)', borderRadius: 12, padding: '14px 16px' }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--acc)', marginBottom: 10 }}>{stats.title} 통계</div>
@@ -1393,8 +1529,13 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   </div>
                 </div>
                 {(stats.classrooms?.length ?? 0) > 0 && (
-                  <div className="sec">
-                    <div className="sec-title">반별 평균 · 최고/최저</div>
+                  <div className="sec" ref={classAvgRef}>
+                    <SecHead
+                      title="반별 평균 · 최고/최저"
+                      getTarget={() => classAvgRef.current}
+                      filename={`${stats.title}_반별평균`}
+                      onError={showToast}
+                    />
                     <div className="card" style={{ padding: 14 }}>
                       <ScoreBars points={stats.classrooms.map((c) => ({
                         key: String(c.classroomId),
@@ -1413,8 +1554,13 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   </div>
                 )}
                 {(stats.distribution?.length ?? 0) > 0 && (
-                  <div className="sec">
-                    <div className="sec-title">성적 분포</div>
+                  <div className="sec" ref={distRef}>
+                    <SecHead
+                      title="성적 분포"
+                      getTarget={() => distRef.current}
+                      filename={`${stats.title}_성적분포`}
+                      onError={showToast}
+                    />
                     <div className="card" style={{ padding: 14 }}>
                       <ScoreBars points={stats.distribution!.map((b) => ({
                         key: b.label,
@@ -1426,9 +1572,14 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                     </div>
                   </div>
                 )}
-                <div className="sec">
-                  <div className="sec-title">학생별 추이 (이름 선택)</div>
-                  <div style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>학생을 누르면 회차별 꺾은선 그래프를 볼 수 있습니다.</div>
+                <div className="sec" ref={rankingRef}>
+                  <SecHead
+                    title="학생별 순위"
+                    getTarget={() => rankingRef.current}
+                    filename={`${stats.title}_학생순위`}
+                    onError={showToast}
+                  />
+                  <div data-skip-capture="" style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>학생을 누르면 회차별 꺾은선 그래프를 볼 수 있습니다.</div>
                   {(stats.ranking ?? []).map((r) => (
                     <div key={r.studentId} className="card" style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}
                       onClick={() => { setHistory(null); setStudentId(r.studentId); setView('student') }}>
@@ -1449,6 +1600,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                       </div>
                     </div>
                   ))}
+                </div>
                 </div>
               </>
             )}

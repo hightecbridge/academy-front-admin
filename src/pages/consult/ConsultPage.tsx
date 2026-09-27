@@ -31,6 +31,13 @@ function dateStr(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
+function formatPhone(v?: string | null) {
+  const d = (v ?? '').replace(/\D/g, '')
+  if (d.length === 11) return `${d.slice(0, 3)}-${d.slice(3, 7)}-${d.slice(7)}`
+  if (d.length === 10) return `${d.slice(0, 3)}-${d.slice(3, 6)}-${d.slice(6)}`
+  return v || ''
+}
+
 export default function ConsultPage() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -38,6 +45,7 @@ export default function ConsultPage() {
   const counselors = useDataStore((s) => s.counselors)
   const consultations = useDataStore((s) => s.consultations)
   const fetchConsultations = useDataStore((s) => s.fetchConsultations)
+  const searchConsultations = useDataStore((s) => s.searchConsultations)
   const fetchCounselors = useDataStore((s) => s.fetchCounselors)
   const addConsultation = useDataStore((s) => s.addConsultation)
   const updateConsultation = useDataStore((s) => s.updateConsultation)
@@ -50,6 +58,10 @@ export default function ConsultPage() {
   const [month, setMonth] = useState(today.getMonth())
   const [selectedDate, setSelectedDate] = useState(today.toISOString().slice(0, 10))
   const [filterKind, setFilterKind] = useState<ConsultKind | 'all'>('all')
+  const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [searchResults, setSearchResults] = useState<Consultation[] | null>(null)
+  const [searching, setSearching] = useState(false)
   const [view, setView] = useState<View>('calendar')
   const [detailId, setDetailId] = useState<number | null>(null)
   const [editId, setEditId] = useState<number | null>(null)
@@ -72,6 +84,26 @@ export default function ConsultPage() {
     void fetchConsultations(year, month + 1)
     void fetchCounselors()
   }, [year, month, fetchConsultations, fetchCounselors])
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search.trim()), 250)
+    return () => window.clearTimeout(t)
+  }, [search])
+
+  useEffect(() => {
+    if (!debouncedSearch) {
+      setSearchResults(null)
+      setSearching(false)
+      return
+    }
+    let alive = true
+    setSearching(true)
+    void searchConsultations(debouncedSearch, filterKind)
+      .then((rows) => { if (alive) setSearchResults(rows) })
+      .catch(() => { if (alive) setSearchResults([]) })
+      .finally(() => { if (alive) setSearching(false) })
+    return () => { alive = false }
+  }, [debouncedSearch, filterKind, searchConsultations])
 
   useEffect(() => {
     const sid = Number(searchParams.get('sid') ?? '')
@@ -132,12 +164,20 @@ export default function ConsultPage() {
 
   const studentOptions = useMemo(() => {
     const q = studentQ.trim()
+    const digits = q.replace(/\D/g, '')
     return students
-      .filter((s) => q ? s.name.includes(q) || s.parentName.includes(q) : true)
+      .filter((s) => {
+        if (!q) return true
+        if (s.name.includes(q) || s.parentName.includes(q)) return true
+        if (digits.length < 3) return false
+        return s.parentPhone.replace(/\D/g, '').includes(digits)
+          || (!!s.phone && s.phone.replace(/\D/g, '').includes(digits))
+      })
       .slice(0, 30)
   }, [students, studentQ])
 
   const detail = consultations.find((c) => c.id === detailId)
+    ?? searchResults?.find((c) => c.id === detailId)
 
   const resetForm = () => {
     setKind('재원생')
@@ -301,7 +341,7 @@ export default function ConsultPage() {
                 <label className="input-label">대상 학생 *</label>
                 <input
                   className="input-field"
-                  placeholder="학생명·학부모명 검색"
+                  placeholder="학생명·학부모명·전화번호 검색"
                   value={studentQ}
                   onChange={(e) => setStudentQ(e.target.value)}
                 />
@@ -325,7 +365,10 @@ export default function ConsultPage() {
                             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--navy)' }}>{s.name}</span>
                             <Badge cls={statusBdgCls(s)}>{s.status}</Badge>
                           </div>
-                          <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>{s.cls} · {s.grade}</div>
+                          <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>
+                            {s.cls} · {s.grade}
+                            {s.parentPhone ? ` · ${formatPhone(s.parentPhone)}` : ''}
+                          </div>
                         </div>
                       </div>
                     )
@@ -404,6 +447,7 @@ export default function ConsultPage() {
                 {detail.kind === '재원생' && (
                   <div>
                     {detail.classroomName ?? ''} {detail.studentStatus ? `· ${detail.studentStatus}` : ''}
+                    {detail.parentPhone ? ` · ${formatPhone(detail.parentPhone)}` : ''}
                     {detail.studentId ? (
                       <span
                         style={{ color: 'var(--acc)', marginLeft: 8, cursor: 'pointer' }}
@@ -444,8 +488,11 @@ export default function ConsultPage() {
     <>
       <TopBar
         title="상담 관리"
-        sub={`${year}년 ${month + 1}월 · ${stats.total}건`}
+        sub={debouncedSearch
+          ? `검색 · ${searchResults?.length ?? 0}건`
+          : `${year}년 ${month + 1}월 · ${stats.total}건`}
         right={
+          debouncedSearch ? undefined : (
           <div style={{ display: 'flex', gap: 6 }}>
             <button className="icon-btn" onClick={prevMonth}>
               <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6" /></svg>
@@ -454,6 +501,7 @@ export default function ConsultPage() {
               <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6" /></svg>
             </button>
           </div>
+          )
         }
       />
 
@@ -474,6 +522,63 @@ export default function ConsultPage() {
           ))}
         </div>
 
+        <div className="sec" style={{ paddingBottom: 0 }}>
+          <input
+            className="input-field"
+            style={{ marginTop: 8, marginBottom: 0 }}
+            placeholder="학생명·학부모명·전화번호로 상담내역 검색"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {debouncedSearch ? (
+          <div className="sec">
+            <div className="row" style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>
+                {searching ? '검색 중…' : `검색 결과 ${searchResults?.length ?? 0}건`}
+              </div>
+            </div>
+            {(searchResults ?? []).length === 0 ? (
+              <div style={{
+                textAlign: 'center', padding: '22px 0', color: 'var(--slate3)', fontSize: 13,
+                border: '1.5px dashed var(--border)', borderRadius: 10,
+              }}>
+                {searching ? '상담내역을 찾고 있습니다.' : '이름 또는 전화번호와 맞는 상담내역이 없습니다.'}
+              </div>
+            ) : (
+              <div className="card">
+                {(searchResults ?? []).map((c) => {
+                  const phone = formatPhone(c.parentPhone || c.prospectPhone)
+                  return (
+                    <div key={c.id} className="list-row" onClick={() => { setDetailId(c.id); setView('detail') }}>
+                      <div style={{ width: 4, alignSelf: 'stretch', background: KIND_META[c.kind].color, borderRadius: 2 }} />
+                      <div style={{ flex: 1 }}>
+                        <div className="row">
+                          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--navy)' }}>{c.studentName}</span>
+                          <div style={{ display: 'flex', gap: 4 }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 8, background: KIND_META[c.kind].bg, color: KIND_META[c.kind].tc }}>{c.kind}</span>
+                            <Badge cls={STATUS_BADGE[c.status]}>{c.status}</Badge>
+                          </div>
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 3 }}>
+                          {c.date}{c.time ? ` ${c.time}` : ''}
+                          {c.classroomName ? ` · ${c.classroomName}` : ''}
+                          {phone ? ` · ${phone}` : ''}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 2 }}>
+                          담당 {c.teacherName || '미지정'}
+                          {c.parentName ? ` · 학부모 ${c.parentName}` : ''}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+        <>
         <div className="sec">
           <div className="stat-grid">
             <div className="stat-card">
@@ -622,6 +727,8 @@ export default function ConsultPage() {
             ))}
           </div>
         </div>
+        </>
+        )}
         <div style={{ height: 24 }} />
       </div>
       <Fab onClick={() => openNew(selectedDate)} />

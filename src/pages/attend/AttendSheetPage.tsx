@@ -5,6 +5,8 @@ import { TopBar, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useDataStore, studentInClass } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
 import type { AttendRecord, AttendStatus } from '../../types'
+import { localISODate } from '../../utils/koreanHolidays'
+import { attendHolidayName, shouldSkipAttend } from '../../utils/attendHoliday'
 
 const STATUS_LIST: AttendStatus[] = ['출석', '지각', '조퇴', '결석']
 
@@ -23,6 +25,7 @@ export default function AttendSheetPage() {
   const classes = useDataStore((s) => s.classes)
   const students = useDataStore((s) => s.students)
   const attendSheets = useDataStore((s) => s.attendSheets)
+  const events = useDataStore((s) => s.events)
   const fetchAttend = useDataStore((s) => s.fetchAttend)
   const senderNumbers = useDataStore((s) => s.senderNumbers)
   const fetchSenderNumbers = useDataStore((s) => s.fetchSenderNumbers)
@@ -96,11 +99,13 @@ export default function AttendSheetPage() {
 
   if (!cls || !date) return <div className="sec">정보를 찾을 수 없습니다.</div>
 
-  const dateObj = new Date(date)
+  const dateObj = new Date(`${date}T00:00:00`)
   const dayNames = ['일', '월', '화', '수', '목', '금', '토']
   const dateLabel = `${dateObj.getMonth() + 1}월 ${dateObj.getDate()}일 (${dayNames[dateObj.getDay()]})`
-  const today = new Date().toISOString().slice(0, 10)
+  const today = localISODate()
   const isToday = date === today
+  const holidayName = attendHolidayName(date, events, cls.name)
+  const skipHoliday = shouldSkipAttend(date, !!user?.excludeHolidaysFromAttend, events, cls.name)
 
   const setStatus = (sid: number, status: AttendStatus) => {
     setRecords((prev) => prev.map((r) => r.sid === sid ? { ...r, status } : r))
@@ -113,6 +118,10 @@ export default function AttendSheetPage() {
   }
 
   const handleSave = async () => {
+    if (skipHoliday) {
+      alert(`공휴일(${holidayName})에는 출석 체크를 하지 않습니다.`)
+      return
+    }
     const finalRecords: AttendRecord[] = records.map((r) => ({
       ...r,
       note: notes[r.sid] || undefined,
@@ -309,6 +318,18 @@ export default function AttendSheetPage() {
       ]} />
 
       <div className="page-content-body">
+        {skipHoliday && (
+          <div className="sec">
+            <div style={{
+              background: 'var(--warn2)', color: '#92400E', borderRadius: 12,
+              padding: '12px 16px', fontSize: 13, lineHeight: 1.5,
+            }}>
+              <strong>{holidayName}</strong> — 공휴일 제외 출석일이 켜져 있어 이 날은 출석 체크를 하지 않습니다.
+              {existing ? ' 기존 기록이 있으면 삭제할 수 있습니다.' : ''}
+            </div>
+          </div>
+        )}
+
         {/* 요약 */}
         <div className="sec">
           <div style={{ background: cls.color, borderRadius: 12, padding: '12px 16px', marginBottom: 0 }}>
@@ -334,6 +355,7 @@ export default function AttendSheetPage() {
         </div>
 
         {/* 일괄 설정 */}
+        {!skipHoliday && (
         <div className="sec">
           <div style={{ display: 'flex', gap: 8 }}>
             <button
@@ -364,8 +386,10 @@ export default function AttendSheetPage() {
             ))}
           </div>
         </div>
+        )}
 
         {/* 학생별 출석 입력 */}
+        {(!skipHoliday || existing) && (
         <div className="sec">
           <div className="sec-title">학생별 출석 ({stuInClass.length}명)</div>
 
@@ -422,6 +446,7 @@ export default function AttendSheetPage() {
                     {STATUS_LIST.map((st) => (
                       <button
                         key={st}
+                        disabled={skipHoliday}
                         onClick={() => setStatus(stu.sid, st)}
                         style={{
                           flex: 1, padding: '7px 0', borderRadius: 8, fontSize: 11, fontWeight: 600,
@@ -468,9 +493,12 @@ export default function AttendSheetPage() {
             )
           })}
         </div>
+        )}
 
         {/* 저장 버튼 */}
         <div className="sec">
+          {!skipHoliday && (
+            <>
           <button
             className="btn-primary"
             onClick={handleSave}
@@ -485,7 +513,9 @@ export default function AttendSheetPage() {
           >
             출석 카카오 알림톡 보내기
           </button>
-          {!isToday && (
+            </>
+          )}
+          {!isToday && !skipHoliday && (
             <div style={{ fontSize: 12, color: 'var(--slate3)', textAlign: 'center', marginTop: 8 }}>
               과거 날짜의 출석부를 수정 중입니다.
             </div>

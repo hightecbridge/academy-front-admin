@@ -161,6 +161,8 @@ export interface ExamScoreSection {
   maxScore: number
   score: number | null
   percent: number | null
+  examAvg?: number | null
+  classAvg?: number | null
 }
 
 export interface ExamSection {
@@ -244,9 +246,12 @@ export interface GradeItem {
   classroomName?: string
   score: number | null
   maxScore: number
+  examAvg?: number | null
   classAvg?: number | null
   rank?: number | null
   rankedCount?: number | null
+  classRank?: number | null
+  classRankedCount?: number | null
   delta?: number | null
   vsClassAvg?: number | null
   comment?: string | null
@@ -313,6 +318,8 @@ export interface Consultation {
   studentName: string
   studentStatus?: string | null
   classroomName?: string | null
+  parentName?: string | null
+  parentPhone?: string | null
   teacherUserId?: number | null
   teacherName?: string | null
   date: string

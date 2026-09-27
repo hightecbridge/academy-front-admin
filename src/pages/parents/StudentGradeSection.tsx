@@ -78,6 +78,13 @@ export function StudentGradeSection({ sid }: { sid: number; classroomId?: number
             <div style={{ textAlign: 'right' }}>
               <div style={{ fontSize: 16, fontWeight: 800 }}>{fmt(it.score)}<span style={{ fontSize: 11, color: 'var(--slate3)' }}>/{it.maxScore}</span></div>
               <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>{it.rank != null ? `${it.rank}등` : '미응시'}</div>
+              {(it.examAvg != null || it.classAvg != null) && (
+                <div style={{ fontSize: 11, color: 'var(--slate2)', marginTop: 2 }}>
+                  {it.examAvg != null ? `전체평균 ${fmt(it.examAvg)}` : ''}
+                  {it.examAvg != null && it.classAvg != null ? ' · ' : ''}
+                  {it.classAvg != null ? `반평균 ${fmt(it.classAvg)}` : ''}
+                </div>
+              )}
             </div>
           </div>
           {sectionLine(it.sectionScores) && (

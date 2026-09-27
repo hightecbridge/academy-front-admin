@@ -17,6 +17,7 @@ export interface AuthUser {
   academyDesc?: string
   academyId?: number
   menuSettings?: Record<string, { enabled: boolean; parentVisible: boolean }>
+  excludeHolidaysFromAttend?: boolean
 }
 
 export interface SignupData {
@@ -40,6 +41,8 @@ interface AuthState {
   clearError: () => void
   updateProfile: (data: Partial<AuthUser>) => Promise<boolean>
   updateMenuSettings: (menus: AuthUser['menuSettings']) => Promise<boolean>
+  updateAttendSettings: (excludeHolidaysFromAttend: boolean) => Promise<boolean>
+  refreshAttendSettings: () => Promise<void>
   changePassword: (current: string, next: string) => Promise<boolean>
   bootstrap: () => Promise<void>
 }
@@ -128,6 +131,7 @@ function toUser(d: any): AuthUser {
     academyLogo: d.academy?.logoBase64 ?? undefined,
     academyId: d.academy?.id,
     menuSettings: d.academy?.menuSettings ?? undefined,
+    excludeHolidaysFromAttend: !!d.academy?.excludeHolidaysFromAttend,
   }
 }
 
@@ -262,6 +266,33 @@ export const useAuthStore = create<AuthState>((set) => ({
     } catch {
       return false
     }
+  },
+
+  updateAttendSettings: async (excludeHolidaysFromAttend) => {
+    try {
+      const res = await client.put('/admin/attend-settings', { excludeHolidaysFromAttend })
+      const saved = res.data.data as { excludeHolidaysFromAttend?: boolean }
+      const currentUser = useAuthStore.getState().user
+      if (!currentUser) return true
+      const user = { ...currentUser, excludeHolidaysFromAttend: !!saved?.excludeHolidaysFromAttend }
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
+      set({ user })
+      return true
+    } catch {
+      return false
+    }
+  },
+
+  refreshAttendSettings: async () => {
+    try {
+      const res = await client.get('/admin/attend-settings')
+      const v = !!res.data.data?.excludeHolidaysFromAttend
+      const currentUser = useAuthStore.getState().user
+      if (!currentUser) return
+      const user = { ...currentUser, excludeHolidaysFromAttend: v }
+      localStorage.setItem(USER_KEY, JSON.stringify(user))
+      set({ user })
+    } catch {}
   },
 
   changePassword: async (current, next) => {

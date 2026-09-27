@@ -1,5 +1,5 @@
 // src/pages/parents/StudentDetailPage.tsx
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { TopBar, Breadcrumb, Avatar, Badge, Toggle, ProgBar, EditIcon, IconBtn, useToast, Toast } from '../../components/common'
 import { useDataStore, clsBdg, clsCol, statusBdgCls, totalFee, paidFee, payPct, barCol } from '../../store/dataStore'
@@ -18,6 +18,24 @@ function normalizePhone(v: string) {
 function isValidPhone(v: string) {
   const digits = normalizePhone(v)
   return digits.length >= 10 && digits.length <= 11
+}
+
+function formatBirthDate(v: string) {
+  const digits = v.replace(/\D/g, '').slice(0, 8)
+  if (digits.length <= 4) return digits
+  if (digits.length <= 6) return `${digits.slice(0, 4)}-${digits.slice(4)}`
+  return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6)}`
+}
+
+/** 6자리(YYMMDD)는 19xx/20xx로 보완해 YYYY-MM-DD로 맞춘다. */
+function completeBirthDate(v: string) {
+  const formatted = formatBirthDate(v)
+  const digits = formatted.replace(/\D/g, '')
+  if (digits.length !== 6) return formatted
+  const yy = Number(digits.slice(0, 2))
+  const thisYy = new Date().getFullYear() % 100
+  const year = yy > thisYy ? 1900 + yy : 2000 + yy
+  return formatBirthDate(`${year}${digits.slice(2)}`)
 }
 
 export function StudentDetailPage() {
@@ -195,6 +213,7 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const students = useDataStore((s) => s.students)
   const classes = useDataStore((s) => s.classes)
   const createStudent = useDataStore((s) => s.createStudent)
+  const updateStudent = useDataStore((s) => s.updateStudent)
 
   const s = mode === 'edit' ? students.find((x) => x.sid === Number(sid)) : undefined
   const fixedClass = classCidParam
@@ -206,12 +225,26 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const [parentName, setParentName] = useState(s?.parentName ?? '')
   const [parentPhone, setParentPhone] = useState(s?.parentPhone ?? '')
   const [name, setName] = useState(s?.name ?? '')
-  const [birth, setBirth] = useState(s?.birth ?? '')
+  const [birth, setBirth] = useState(formatBirthDate(s?.birth ?? ''))
   const [grade, setGrade] = useState(s?.grade ?? '초등 6')
   const [cls, setCls] = useState(defaultCls)
   const [phone, setPhone] = useState(s?.phone ?? '')
   const [status, setStatus] = useState<'재원' | '휴원' | '퇴원'>(s?.status ?? '재원')
   const [kakaoVal, setKakaoVal] = useState(s?.kakao ?? true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (mode !== 'edit' || !s) return
+    setParentName(s.parentName ?? '')
+    setParentPhone(s.parentPhone ?? '')
+    setName(s.name ?? '')
+    setBirth(formatBirthDate(s.birth ?? ''))
+    setGrade(s.grade ?? '초등 6')
+    setCls(s.cls || (classes[0]?.name ?? 'A반'))
+    setPhone(s.phone ?? '')
+    setStatus(s.status ?? '재원')
+    setKakaoVal(s.kakao ?? true)
+  }, [mode, s?.sid])
 
   const handleSubmit = async () => {
     if (!parentName.trim()) { alert('학부모 이름을 입력하세요.'); return }
@@ -225,13 +258,20 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
       alert('학생 연락처는 10~11자리 숫자로 입력해 주세요.')
       return
     }
-    if (mode === 'add') {
-      const clsData = fixedClass ?? classes.find((c) => c.name === cls)
-      if (!clsData) {
-        alert('반 정보를 찾을 수 없습니다. 반을 다시 선택해주세요.')
-        return
-      }
-      try {
+    const birthFormatted = completeBirthDate(birth.trim())
+    if (birthFormatted && !/^\d{4}-\d{2}-\d{2}$/.test(birthFormatted)) {
+      alert('생년월일은 숫자 8자리(예: 20120315)로 입력해 주세요.')
+      return
+    }
+    if (birthFormatted) setBirth(birthFormatted)
+    const clsData = fixedClass ?? classes.find((c) => c.name === cls)
+    if (!clsData) {
+      alert('반 정보를 찾을 수 없습니다. 반을 다시 선택해주세요.')
+      return
+    }
+    setSaving(true)
+    try {
+      if (mode === 'add') {
         await createStudent({
           parentName: parentName.trim(),
           parentPhone: parentPhone.trim(),
@@ -240,25 +280,41 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
           classroomId: clsData.cid,
           status,
           phone: phone.trim() || undefined,
-          birthDate: birth.trim() || undefined,
+          birthDate: birthFormatted || undefined,
           loginPhone: parentPhone.trim(),
           loginPassword: '0000',
           kakaoLinked: kakaoVal,
         })
-      } catch (e: unknown) {
-        const err = e as { response?: { data?: { message?: string } }; message?: string }
-        alert(err?.response?.data?.message ?? err?.message ?? '학생 등록에 실패했습니다.')
-        return
+      } else {
+        if (!s) {
+          alert('학생을 찾을 수 없습니다.')
+          return
+        }
+        await updateStudent(s.sid, {
+          parentName: parentName.trim(),
+          parentPhone: parentPhone.trim(),
+          name: name.trim(),
+          grade,
+          classroomId: clsData.cid,
+          status,
+          phone: phone.trim() || undefined,
+          birthDate: birthFormatted || undefined,
+          kakaoLinked: kakaoVal,
+        })
       }
-    } else {
-      alert('수정 기능은 아직 준비 중입니다.')
-      return
-    }
-    alert(mode === 'add' ? '학생이 등록되었습니다.' : '저장되었습니다.')
-    if (fixedClass) {
-      navigate(`/class/${fixedClass.cid}`, { state: { tabIdx: 1 } })
-    } else {
-      navigate('/parents')
+      alert(mode === 'add' ? '학생이 등록되었습니다.' : '저장되었습니다.')
+      if (mode === 'edit') {
+        navigate(`/parents/${sid}`)
+      } else if (fixedClass) {
+        navigate(`/class/${fixedClass.cid}`, { state: { tabIdx: 1 } })
+      } else {
+        navigate('/parents')
+      }
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string } }; message?: string }
+      alert(err?.response?.data?.message ?? err?.message ?? (mode === 'add' ? '학생 등록에 실패했습니다.' : '학생 정보 저장에 실패했습니다.'))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -266,6 +322,14 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
   const cancelPath = mode === 'add'
     ? (fixedClass ? `/class/${fixedClass.cid}` : '/parents')
     : `/parents/${sid}`
+
+  if (mode === 'edit' && !s) {
+    return (
+      <div className="sec" style={{ padding: 20, color: 'var(--slate2)', fontSize: 14 }}>
+        {students.length === 0 ? '학생 정보를 불러오는 중입니다…' : '학생을 찾을 수 없습니다.'}
+      </div>
+    )
+  }
 
   return (
     <>
@@ -315,7 +379,15 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
           <input className="input-field" type="tel" placeholder="010-0000-0000" value={phone} onChange={(e) => setPhone(e.target.value)} />
 
           <label className="input-label">생년월일</label>
-          <input className="input-field" placeholder="2012-03-15" value={birth} onChange={(e) => setBirth(e.target.value)} />
+          <input
+            className="input-field"
+            inputMode="numeric"
+            placeholder="20120315 또는 120315"
+            maxLength={10}
+            value={birth}
+            onChange={(e) => setBirth(formatBirthDate(e.target.value))}
+            onBlur={() => setBirth(completeBirthDate(birth))}
+          />
 
           <label className="input-label">학년</label>
           <select className="input-field" value={grade} onChange={(e) => setGrade(e.target.value)}>
@@ -342,10 +414,10 @@ export function StudentFormPage({ mode }: { mode: 'add' | 'edit' }) {
             </>
           )}
 
-          <button className="btn-primary" onClick={() => void handleSubmit()}>
-            {mode === 'add' ? '등록 완료' : '저장'}
+          <button className="btn-primary" disabled={saving} onClick={() => void handleSubmit()}>
+            {saving ? '저장 중…' : mode === 'add' ? '등록 완료' : '저장'}
           </button>
-          <button className="btn-secondary" onClick={() => navigate(cancelPath, fixedClass ? { state: { tabIdx: 1 } } : undefined)}>
+          <button className="btn-secondary" disabled={saving} onClick={() => navigate(cancelPath, fixedClass ? { state: { tabIdx: 1 } } : undefined)}>
             취소
           </button>
         </div>

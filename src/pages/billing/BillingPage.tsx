@@ -192,8 +192,11 @@ export default function BillingPage() {
 
   const planChanged = planId !== activeBillingPlanId
   const downgradeBlocked = downgradeBlockedMessage(planId)
+  const paymentDue = Boolean(data?.paymentRequired)
+  /** 기간 만료 + 등록 카드 + 현재 요금제: 카드 재입력 없이 즉시 청구 */
+  const payNowSamePlan = paymentDue && recurringRegistered && !planChanged
   const canChangePlan = recurringRegistered && planChanged && !downgradeBlocked
-  const subscribeDisabled = recurringRegistered && (!planChanged || !!downgradeBlocked)
+  const subscribeDisabled = recurringRegistered && !payNowSamePlan && (!planChanged || !!downgradeBlocked)
 
   const handlePlanSelect = (targetPlanId: PlanId) => {
     const blockMsg = downgradeBlockedMessage(targetPlanId)
@@ -386,7 +389,44 @@ export default function BillingPage() {
     }
   }
 
+  const payNow = async () => {
+    const amount = registeredMonthlyKrw
+    const ok = window.confirm(
+      `${registeredPlanName} 요금제 ${fmtKrw(amount)}원을 등록된 카드로 결제하시겠습니까?`,
+    )
+    if (!ok) return
+    setBusy(true)
+    setErr('')
+    try {
+      const res = await client.post('/admin/billing/subscribe/pay-now')
+      const summary = (res.data as { data: BillingSummary }).data
+      setData(summary)
+      void useBillingAccessStore.getState().refresh()
+      setNotice({
+        planName: registeredPlanName,
+        cycle: '월 정기결제',
+        amountKrw: amount,
+        subscriptionEndsAt: summary.subscriptionEndsAt,
+      })
+      const successMsg = '결제가 완료되었습니다. 이제 서비스를 이용할 수 있습니다.'
+      showToast(successMsg)
+      setResultPopup({ type: 'success', message: successMsg })
+    } catch (e: unknown) {
+      const ax = e as { response?: { data?: { message?: string } } }
+      const msg = ax.response?.data?.message ?? '바로 결제에 실패했습니다. 카드 정보를 확인한 뒤 다시 시도해 주세요.'
+      setErr(msg)
+      showToast(msg)
+      setResultPopup({ type: 'error', message: msg })
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const subscribe = async () => {
+    if (payNowSamePlan) {
+      void payNow()
+      return
+    }
     const planError = validateBeforeSubscribe()
     if (planError) {
       const blockMsg = downgradeBlockedMessage(planId)
@@ -460,6 +500,30 @@ export default function BillingPage() {
       <TopBar title="이용요금관리" sub="체험 · 구독 · 하이아카데미 포인트" />
       <div className="page-content-body">
         {err && <div className="sec"><div style={{ padding: 12, borderRadius: 10, background: 'var(--err2)', color: 'var(--err)' }}>{err}</div></div>}
+
+        {paymentDue && (
+          <div className="sec">
+            <div style={{ padding: 16, borderRadius: 12, background: '#FEF3C7', border: '1px solid #F59E0B' }}>
+              <div style={{ fontWeight: 800, color: '#92400E', marginBottom: 6 }}>이용 기간이 만료되었습니다</div>
+              <div style={{ fontSize: 14, color: '#78350F', lineHeight: 1.6 }}>
+                {recurringRegistered
+                  ? `등록된 카드로 ${registeredPlanName} 요금제 ${fmtKrw(registeredMonthlyKrw)}원을 바로 결제하면 다시 이용할 수 있습니다.`
+                  : '카드를 등록한 뒤 바로 결제하면 다시 이용할 수 있습니다.'}
+              </div>
+              {(payNowSamePlan || !recurringRegistered) && (
+                <button
+                  type="button"
+                  className="btn-primary"
+                  style={{ width: 'auto', marginTop: 12, padding: '10px 16px' }}
+                  disabled={busy}
+                  onClick={() => void subscribe()}
+                >
+                  {busy ? '처리 중…' : '바로 결제하기'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
 
         {notice && (
           <div className="sec">
@@ -780,17 +844,21 @@ export default function BillingPage() {
             >
               {busy
                 ? '처리 중…'
-                : recurringRegistered
-                  ? planId === activeBillingPlanId
-                    ? '현재 요금제'
-                    : downgradeBlocked
-                      ? '학생 수 초과'
-                      : isPlanUpgrade(activeBillingPlanId, planId)
-                        ? '요금제 업그레이드'
-                        : isPlanDowngrade(activeBillingPlanId, planId)
-                          ? '요금제 다운그레이드'
-                          : '요금제 변경'
-                  : '정기결제 등록'}
+                : payNowSamePlan
+                  ? '바로 결제하기'
+                  : recurringRegistered
+                    ? planId === activeBillingPlanId
+                      ? '현재 요금제'
+                      : downgradeBlocked
+                        ? '학생 수 초과'
+                        : isPlanUpgrade(activeBillingPlanId, planId)
+                          ? '요금제 업그레이드'
+                          : isPlanDowngrade(activeBillingPlanId, planId)
+                            ? '요금제 다운그레이드'
+                            : '요금제 변경'
+                    : paymentDue
+                      ? '바로 결제하기'
+                      : '정기결제 등록'}
             </button>
           </div>
         </div>

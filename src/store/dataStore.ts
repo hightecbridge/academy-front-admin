@@ -58,6 +58,7 @@ interface DataState {
   fetchSenderNumbers: () => Promise<void>
   fetchMessageSends:  () => Promise<void>
   fetchConsultations: (year?: number, month?: number, kind?: ConsultKind | 'all') => Promise<void>
+  searchConsultations: (q: string, kind?: ConsultKind | 'all') => Promise<Consultation[]>
   fetchCounselors: () => Promise<void>
   fetchStudentConsultations: (sid: number) => Promise<Consultation[]>
   addConsultation: (payload: ConsultWritePayload) => Promise<Consultation>
@@ -97,6 +98,17 @@ interface DataState {
     loginPassword?: string
     badgeColor?: string
     badgeTextColor?: string
+    kakaoLinked?: boolean
+  }) => Promise<Student>
+  updateStudent: (sid: number, s: {
+    name: string
+    grade: string
+    classroomId: number
+    parentName: string
+    parentPhone: string
+    status?: string
+    phone?: string
+    birthDate?: string
     kakaoLinked?: boolean
   }) => Promise<Student>
   deleteStudent: (sid: number) => Promise<void>
@@ -236,6 +248,8 @@ function toExamScoreSection(s: any): ExamScoreSection {
     maxScore: typeof s.maxScore === 'number' ? s.maxScore : 100,
     score: s.score ?? null,
     percent: s.percent ?? null,
+    examAvg: s.examAvg ?? null,
+    classAvg: s.classAvg ?? null,
   }
 }
 
@@ -323,9 +337,12 @@ function toGradeHistory(d: any): GradeHistory {
           classroomName: it.classroomName ?? '',
           score: it.score ?? null,
           maxScore: typeof it.maxScore === 'number' ? it.maxScore : 100,
+          examAvg: it.examAvg ?? null,
           classAvg: it.classAvg ?? null,
           rank: it.rank ?? null,
           rankedCount: it.rankedCount ?? null,
+          classRank: it.classRank ?? null,
+          classRankedCount: it.classRankedCount ?? null,
           delta: it.delta ?? null,
           vsClassAvg: it.vsClassAvg ?? null,
           comment: it.comment ?? '',
@@ -398,6 +415,25 @@ function toNotice(d: any): NoticeItem {
   }
 }
 
+function matchesConsultSearch(c: Consultation, q: string, students: Student[]) {
+  const nq = q.trim()
+  if (!nq) return true
+  const digits = nq.replace(/\D/g, '')
+  const stu = c.studentId != null ? students.find((s) => s.sid === c.studentId) : undefined
+  const names = [
+    c.studentName,
+    c.parentName,
+    c.prospectName,
+    c.prospectParentName,
+    stu?.name,
+    stu?.parentName,
+  ]
+  if (names.some((n) => n && n.includes(nq))) return true
+  if (digits.length < 3) return false
+  const phones = [c.parentPhone, c.prospectPhone, stu?.parentPhone, stu?.phone]
+  return phones.some((p) => p && p.replace(/\D/g, '').includes(digits))
+}
+
 function toConsult(d: any): Consultation {
   return {
     id: d.id,
@@ -406,6 +442,8 @@ function toConsult(d: any): Consultation {
     studentName: d.studentName ?? d.prospectName ?? '',
     studentStatus: d.studentStatus ?? null,
     classroomName: d.classroomName ?? null,
+    parentName: d.parentName ?? null,
+    parentPhone: d.parentPhone ?? null,
     teacherUserId: d.teacherUserId ?? null,
     teacherName: d.teacherName ?? null,
     date: d.date ?? '',
@@ -765,6 +803,27 @@ export const useDataStore = create<DataState>((set, get) => ({
     return created
   },
 
+  updateStudent: async (sid, student) => {
+    const res = await client.put(`/admin/students/${sid}`, {
+      name: student.name,
+      grade: student.grade,
+      classroomId: student.classroomId,
+      parentName: student.parentName,
+      parentPhone: student.parentPhone,
+      status: student.status,
+      phone: student.phone?.trim() || undefined,
+      birthDate: student.birthDate?.trim() || undefined,
+      kakaoLinked: student.kakaoLinked ?? false,
+    })
+    await get().fetchStudents(get().paymentYearMonth)
+    if (student.status != null) {
+      const y = get().dashboardStats?.year
+      await get().fetchDashboardStats(y)
+    }
+    const ym = get().paymentYearMonth
+    return get().students.find((stu) => stu.sid === sid) ?? toStudent(res.data.data, ym)
+  },
+
   deleteStudent: async (sid) => {
     await get().withdrawStudent(sid)
   },
@@ -792,6 +851,17 @@ export const useDataStore = create<DataState>((set, get) => ({
     } catch (e) {
       console.error('상담 목록 조회 실패:', e)
     }
+  },
+
+  searchConsultations: async (q, kind) => {
+    const query = q.trim()
+    if (!query) return []
+    const params: Record<string, string> = { q: query }
+    if (kind && kind !== 'all') params.kind = kind
+    const res = await client.get('/admin/consultations', { params })
+    const list = res.data?.data ?? []
+    const rows = Array.isArray(list) ? list.map(toConsult) : []
+    return rows.filter((c: Consultation) => matchesConsultSearch(c, query, get().students))
   },
 
   fetchCounselors: async () => {
