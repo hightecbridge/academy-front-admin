@@ -27,13 +27,17 @@ function cellNum(v: unknown): { ok: boolean; empty: boolean; value: number | nul
 }
 
 function headersFor(exam: ExamItem): string[] {
-  const cols = ['학생ID', '학생명', '반', '학년', '전체점수']
-  for (const sec of exam.sections ?? []) {
-    cols.push(sec.name)
-    cols.push(`${sec.name}백분율`)
-  }
+  const sections = exam.sections ?? []
+  const cols = ['학생ID', '학생명', '반']
+  if (sections.length === 0) cols.push('전체점수')
+  for (const sec of sections) cols.push(sec.name)
   cols.push('코멘트')
   return cols
+}
+
+function percentOf(score: number, maxScore: number): number | null {
+  if (maxScore <= 0) return null
+  return Math.round((score * 1000) / maxScore) / 10
 }
 
 export function downloadExamScoreTemplate(exam: ExamItem, rows: ExamScoreRow[], drafts?: Record<number, {
@@ -42,6 +46,7 @@ export function downloadExamScoreTemplate(exam: ExamItem, rows: ExamScoreRow[], 
   sections: Record<number, { score: string; percent: string }>
 }>) {
   const headers = headersFor(exam)
+  const sections = exam.sections ?? []
   const data: (string | number)[][] = [headers]
   for (const row of rows) {
     const draft = drafts?.[row.studentId]
@@ -49,14 +54,14 @@ export function downloadExamScoreTemplate(exam: ExamItem, rows: ExamScoreRow[], 
       row.studentId,
       row.studentName,
       row.classroomName ?? '',
-      '',
-      draft?.score ?? (row.score == null ? '' : row.score),
     ]
-    for (const sec of exam.sections ?? []) {
+    if (sections.length === 0) {
+      line.push(draft?.score ?? (row.score == null ? '' : row.score))
+    }
+    for (const sec of sections) {
       const sd = draft?.sections[sec.id]
       const saved = row.sectionScores?.find((s) => s.sectionId === sec.id)
       line.push(sd?.score ?? (saved?.score == null ? '' : saved.score))
-      line.push(sd?.percent ?? (saved?.percent == null ? '' : saved.percent))
     }
     line.push(draft?.comment ?? row.comment ?? '')
     data.push(line)
@@ -68,8 +73,9 @@ export function downloadExamScoreTemplate(exam: ExamItem, rows: ExamScoreRow[], 
   const guide = XLSX.utils.aoa_to_sheet([
     ['안내'],
     ['학생ID는 수정하지 마세요. 이름·반으로 매칭하지 않고 ID로 반영됩니다.'],
-    ['전체점수·과목 점수를 숫자로 입력하세요. 비워 두면 미응시/미입력입니다.'],
-    ['과목 실제 점수만 넣으면 백분율은 비워도 됩니다.'],
+    [(exam.sections ?? []).length > 0
+      ? '영역 점수만 숫자로 입력하세요. 백분율과 전체 점수는 자동 계산됩니다. 비워 두면 미입력입니다.'
+      : '전체점수를 숫자로 입력하세요. 비워 두면 미응시입니다.'],
     [`전체 만점: ${exam.maxScore}점`],
   ])
   XLSX.utils.book_append_sheet(wb, guide, '안내')
@@ -88,8 +94,17 @@ export function parseExamScoreExcel(
   if (rows.length < 2) return { records: [], errors: [{ row: 1, message: '데이터가 없습니다.' }] }
 
   const header = (rows[0] ?? []).map((h) => cellStr(h))
+  const sections = exam.sections ?? []
+  const hasSections = sections.length > 0
   const idIdx = header.findIndex((h) => h.replace(/\s/g, '') === '학생ID' || h === '학생ID')
   if (idIdx < 0) return { records: [], errors: [{ row: 1, message: '학생ID 열이 없습니다. 템플릿을 다시 내려받으세요.' }] }
+  if (hasSections) {
+    for (const sec of sections) {
+      if (!header.includes(sec.name)) {
+        return { records: [], errors: [{ row: 1, message: `${sec.name} 열이 없습니다. 템플릿을 다시 내려받으세요.` }] }
+      }
+    }
+  }
   const scoreIdx = header.findIndex((h) => h.replace(/\s/g, '') === '전체점수')
   const commentIdx = header.findIndex((h) => h === '코멘트' || h === '메모')
   const byId = new Map(roster.map((r) => [r.studentId, r]))
@@ -114,7 +129,7 @@ export function parseExamScoreExcel(
     seen.add(studentId)
     const student = byId.get(studentId)!
     let score: number | null = null
-    if (scoreIdx >= 0) {
+    if (!hasSections && scoreIdx >= 0) {
       const parsed = cellNum(line[scoreIdx])
       if (!parsed.ok) {
         errors.push({ row: rowNum, message: `${student.studentName}: 전체점수가 숫자가 아닙니다.` })
@@ -128,20 +143,13 @@ export function parseExamScoreExcel(
         score = parsed.value
       }
     }
-    const sections: ExamExcelRecord['sections'] = []
+    const sectionRows: ExamExcelRecord['sections'] = []
     let sectionError = false
-    for (const sec of exam.sections ?? []) {
+    for (const sec of sections) {
       const sIdx = header.findIndex((h) => h === sec.name)
-      const pIdx = header.findIndex((h) => h === `${sec.name}백분율` || h === `${sec.name}_백분율`)
-      const sParsed = sIdx >= 0 ? cellNum(line[sIdx]) : { ok: true, empty: true, value: null as number | null }
-      const pParsed = pIdx >= 0 ? cellNum(line[pIdx]) : { ok: true, empty: true, value: null as number | null }
+      const sParsed = cellNum(line[sIdx])
       if (!sParsed.ok) {
         errors.push({ row: rowNum, message: `${student.studentName}: ${sec.name} 점수가 숫자가 아닙니다.` })
-        sectionError = true
-        break
-      }
-      if (!pParsed.ok) {
-        errors.push({ row: rowNum, message: `${student.studentName}: ${sec.name} 백분율이 숫자가 아닙니다.` })
         sectionError = true
         break
       }
@@ -150,15 +158,10 @@ export function parseExamScoreExcel(
         sectionError = true
         break
       }
-      if (!pParsed.empty && (pParsed.value! < 0 || pParsed.value! > 100)) {
-        errors.push({ row: rowNum, message: `${student.studentName}: ${sec.name} 백분율은 0~100입니다.` })
-        sectionError = true
-        break
-      }
-      sections.push({
+      sectionRows.push({
         sectionId: sec.id,
         score: sParsed.empty ? null : sParsed.value,
-        percent: pParsed.empty ? null : pParsed.value,
+        percent: sParsed.empty ? null : percentOf(sParsed.value!, sec.maxScore),
       })
     }
     if (sectionError) continue
@@ -166,7 +169,7 @@ export function parseExamScoreExcel(
       studentId,
       score,
       comment: commentIdx >= 0 ? cellStr(line[commentIdx]) : '',
-      sections,
+      sections: sectionRows,
     })
   }
   return { records, errors }

@@ -250,6 +250,10 @@ function toExamScoreSection(s: any): ExamScoreSection {
     percent: s.percent ?? null,
     examAvg: s.examAvg ?? null,
     classAvg: s.classAvg ?? null,
+    rank: s.rank ?? null,
+    rankedCount: s.rankedCount ?? null,
+    classRank: s.classRank ?? null,
+    classRankedCount: s.classRankedCount ?? null,
   }
 }
 

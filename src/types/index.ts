@@ -163,6 +163,10 @@ export interface ExamScoreSection {
   percent: number | null
   examAvg?: number | null
   classAvg?: number | null
+  rank?: number | null
+  rankedCount?: number | null
+  classRank?: number | null
+  classRankedCount?: number | null
 }
 
 export interface ExamSection {

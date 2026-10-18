@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { TopBar, Fab, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useDataStore, studentInClass } from '../../store/dataStore'
@@ -43,6 +43,11 @@ function emptyScoreDraft(): ScoreDraft {
 function fmtScore(v: number | null | undefined) {
   if (v == null) return '—'
   return Number.isInteger(v) ? String(v) : v.toFixed(1)
+}
+
+function scorePercent(value: number | null | undefined, max: number): number | null {
+  if (value == null || max <= 0) return null
+  return Math.round((value * 1000) / max) / 10
 }
 
 function calcPercent(score: string, max: number): string {
@@ -161,9 +166,9 @@ const BAR = {
   mine: { label: '내 점수', color: 'var(--ok)' },
 } as const
 
-function BarLegend() {
+function BarLegend({ marginBottom = 10 }: { marginBottom?: number }) {
   return (
-    <div style={{ display: 'flex', gap: 12, marginBottom: 10, fontSize: 11, fontWeight: 700, flexWrap: 'wrap' }}>
+    <div style={{ display: 'flex', gap: 12, marginBottom, fontSize: 11, fontWeight: 700, flexWrap: 'wrap' }}>
       {Object.values(BAR).map((b) => (
         <span key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 5, color: b.color }}>
           <span style={{ width: 8, height: 8, borderRadius: 2, background: b.color }} />{b.label}
@@ -229,7 +234,7 @@ function SecHead({
   onError: (msg: string) => void
 }) {
   return (
-    <div className="sec-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+    <div className="sec-title" data-skip-capture="" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
       <span>{title}</span>
       <ImageSaveButton getTarget={getTarget} filename={filename} onError={onError} />
     </div>
@@ -249,7 +254,7 @@ function ThreeScoreBars({
   maxScore?: number
 }) {
   const max = Math.max(1, maxScore, examAvg ?? 0, classAvg ?? 0, myScore ?? 0)
-  const chartH = 120
+  const chartH = 200
   const items = [
     { ...BAR.examAvg, value: examAvg },
     { ...BAR.classAvg, value: classAvg },
@@ -258,22 +263,37 @@ function ThreeScoreBars({
   return (
     <div>
       <BarLegend />
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 16, height: 160, padding: '0 8px', justifyContent: 'center' }}>
-        {items.map((p) => (
-          <div key={p.label} style={{ flex: 1, maxWidth: 90, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: p.color, marginBottom: 6 }}>
-              {p.value == null ? '—' : fmtScore(p.value)}
+      <div style={{ width: '100%', padding: '8px 4px 0' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'flex-end',
+          gap: 28,
+          width: '100%',
+          borderBottom: '2.5px solid #A78BFA',
+        }}>
+          {items.map((p) => (
+            <div key={p.label} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
+              <div style={{ fontSize: 22, fontWeight: 800, color: p.color, marginBottom: 10 }}>
+                {p.value == null ? '—' : `${fmtScore(p.value)}점`}
+              </div>
+              <div style={{
+                width: '42%', maxWidth: 96, minWidth: 48,
+                height: barHeight(p.value, max, chartH),
+                background: p.value == null ? 'var(--bg3)' : p.color,
+                border: '2px solid #7C3AED',
+                borderRadius: '10px 10px 0 0',
+                opacity: p.value == null ? 0.45 : 1,
+              }} />
             </div>
-            <div style={{
-              width: '72%', maxWidth: 44,
-              height: barHeight(p.value, max, chartH),
-              background: p.value == null ? 'var(--bg3)' : p.color,
-              borderRadius: '6px 6px 2px 2px',
-              opacity: p.value == null ? 0.45 : 1,
-            }} />
-            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--navy)', marginTop: 8 }}>{p.label}</div>
-          </div>
-        ))}
+          ))}
+        </div>
+        <div style={{ display: 'flex', gap: 28, width: '100%', paddingTop: 10 }}>
+          {items.map((p) => (
+            <div key={p.label} style={{ flex: 1, minWidth: 0, textAlign: 'center', fontSize: 15, fontWeight: 800, color: 'var(--navy)' }}>
+              {p.label}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -314,51 +334,295 @@ function ScoreBars({
   )
 }
 
-/** 시험별로 전체평균·반평균·내 점수를 묶어서 표시 */
+function textEm(text: string) {
+  let em = 0
+  for (const ch of text) em += (ch >= '0' && ch <= '9') || ch === '.' ? 0.62 : 1
+  return em || 1
+}
+
+function fitFontSize(text: string, colW: number, maxFont: number, minFont: number) {
+  if (colW <= 0) return minFont
+  const fitted = Math.floor((colW - 1) / textEm(text))
+  return Math.max(minFont, Math.min(maxFont, fitted))
+}
+
+/** 영역 수와 가로 너비에 맞춰 막대·글자 크기를 줄여 스크롤 없이 한 줄에 맞춘다 */
+function subjectChartLayout(count: number, rowWidth: number) {
+  const n = Math.max(1, count)
+  const gap = n >= 7 ? 10 : n >= 5 ? 12 : 16
+  const innerGap = n >= 6 ? 4 : n >= 4 ? 8 : 12
+  const width = rowWidth > 0 ? rowWidth : 320
+  const groupW = Math.max(0, (width - gap * (n - 1)) / n)
+  const chromeX = 23
+  const colW = Math.max(0, (groupW - chromeX - innerGap * 2) / 3)
+  const labelMode: 'full' | 'short' | 'none' = colW >= 54 ? 'full' : colW >= 28 ? 'short' : 'none'
+  const chartH = groupW >= 150 ? 220 : groupW >= 96 ? 180 : 150
+  return {
+    gap,
+    innerGap,
+    colW,
+    chartH,
+    labelMode,
+    labelFont: colW >= 54 ? 11 : 10,
+    nameFont: groupW >= 120 ? 14 : groupW >= 72 ? 12 : 11,
+    subFont: groupW >= 100 ? 12 : 10,
+    barW: Math.max(4, Math.min(44, colW * 0.82)),
+    scoreMax: colW >= 58 ? 16 : 14,
+    withPoint: colW >= 42,
+  }
+}
+
+function barCaption(label: string, mode: 'full' | 'short' | 'none') {
+  if (mode === 'none') return ''
+  if (mode === 'full') return label
+  if (label === '전체평균') return '전체'
+  if (label === '반평균') return '반'
+  if (label === '내 점수') return '내'
+  return label
+}
+
+/** 시험별·영역별로 전체평균·반평균·내 점수를 묶어서 표시 */
 function ExamCompareBars({
   exams,
+  size = 'compact',
 }: {
-  exams: { key: string; label: string; sub?: string; myScore: number | null; examAvg: number | null; classAvg: number | null; maxScore: number }[]
+  exams: {
+    key: string
+    label: string
+    sub?: string
+    myScore: number | null
+    examAvg: number | null
+    classAvg: number | null
+    maxScore: number
+    rank?: number | null
+    rankedCount?: number | null
+    classRank?: number | null
+    classRankedCount?: number | null
+  }[]
+  /** large: 영역별 실제 점수를 막대 위에 적고, 너비에 맞춰 스크롤 없이 줄인다 */
+  size?: 'compact' | 'large'
 }) {
+  const large = size === 'large'
+  const rowRef = useRef<HTMLDivElement>(null)
+  const [rowWidth, setRowWidth] = useState(0)
+  useEffect(() => {
+    const el = rowRef.current
+    if (!el || !large) return
+    const apply = () => setRowWidth(el.clientWidth)
+    apply()
+    const ro = new ResizeObserver(apply)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [large, exams.length])
+
   if (exams.length === 0) {
     return <div style={{ fontSize: 13, color: 'var(--slate3)', padding: '12px 0' }}>데이터가 없습니다.</div>
   }
-  const max = Math.max(1, ...exams.flatMap((e) => [e.maxScore, e.myScore ?? 0, e.examAvg ?? 0, e.classAvg ?? 0]))
-  const chartH = 110
+  const sharedMax = Math.max(1, ...exams.flatMap((e) => [e.maxScore, e.myScore ?? 0, e.examAvg ?? 0, e.classAvg ?? 0]))
+  const layout = large ? subjectChartLayout(exams.length, rowWidth) : null
+  const chartH = layout?.chartH ?? 110
   return (
-    <div>
-      <BarLegend />
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 168, padding: '0 2px', overflowX: 'auto' }}>
-        {exams.map((ex) => (
-          <div key={ex.key} style={{ flex: '1 0 72px', minWidth: 72, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: chartH + 22, width: '100%', justifyContent: 'center' }}>
-              {[
-                { ...BAR.examAvg, value: ex.examAvg },
-                { ...BAR.classAvg, value: ex.classAvg },
-                { ...BAR.mine, value: ex.myScore },
-              ].map((b) => (
-                <div
-                  key={b.label}
-                  title={`${b.label} ${b.value == null ? '—' : fmtScore(b.value)}`}
-                  style={{
-                    width: 10,
-                    height: barHeight(b.value, max, chartH),
-                    background: b.value == null ? 'var(--bg3)' : b.color,
-                    borderRadius: '3px 3px 1px 1px',
-                    opacity: b.value == null ? 0.4 : 1,
-                  }}
-                />
-              ))}
-            </div>
-            <div style={{
-              fontSize: 10, color: 'var(--slate2)', marginTop: 6, textAlign: 'center',
-              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', width: '100%',
+    <div style={{ width: '100%', minWidth: 0 }}>
+      <BarLegend marginBottom={large ? 6 : 10} />
+      <div
+        ref={rowRef}
+        style={large ? {
+          display: 'grid',
+          gridTemplateColumns: `repeat(${exams.length}, minmax(0, 1fr))`,
+          columnGap: layout?.gap ?? 12,
+          width: '100%',
+          minWidth: 0,
+          alignItems: 'stretch',
+        } : {
+          display: 'flex',
+          alignItems: 'flex-end',
+          gap: 10,
+          height: 168,
+          padding: '0 2px',
+          overflowX: 'auto',
+        }}
+      >
+        {exams.map((ex) => {
+          const max = large
+            ? Math.max(1, ex.maxScore, ex.myScore ?? 0, ex.examAvg ?? 0, ex.classAvg ?? 0)
+            : sharedMax
+          const bars = [
+            { ...BAR.examAvg, value: ex.examAvg },
+            { ...BAR.classAvg, value: ex.classAvg },
+            { ...BAR.mine, value: ex.myScore },
+          ]
+          return (
+            <div key={ex.key} style={{
+              flex: large ? undefined : '1 0 72px',
+              minWidth: large ? 0 : 72,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: large ? 'flex-start' : 'flex-end',
+              overflow: 'hidden',
+              ...(large ? {
+                border: '2px solid #A78BFA',
+                borderRadius: 12,
+                background: '#F7F4FF',
+                padding: '12px 10px 14px',
+                boxShadow: '0 2px 8px rgba(124, 108, 255, 0.12)',
+              } : {}),
             }}>
-              {ex.label}
+              {large && (
+                <div style={{
+                  width: '100%',
+                  textAlign: 'center',
+                  paddingBottom: 8,
+                  marginBottom: 12,
+                  borderBottom: '1.5px solid #DDD6FE',
+                }}>
+                  <div style={{
+                    display: 'block',
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: 'linear-gradient(135deg, #7B6CFF 0%, #C084FC 100%)',
+                    color: '#fff',
+                    boxShadow: '0 4px 10px rgba(124, 108, 255, 0.28)',
+                    fontSize: Math.max(layout?.nameFont ?? 14, 16),
+                    fontWeight: 800,
+                    lineHeight: 1.2,
+                    letterSpacing: '-0.02em',
+                    borderRadius: 8,
+                    padding: '7px 8px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {ex.label}
+                  </div>
+                  {ex.sub && (
+                    <div style={{
+                      fontSize: Math.max(layout?.subFont ?? 12, 13),
+                      fontWeight: 800,
+                      color: 'var(--navy)',
+                      marginTop: 4,
+                      lineHeight: 1.35,
+                      wordBreak: 'keep-all',
+                    }}>{ex.sub}</div>
+                  )}
+                </div>
+              )}
+              <div style={large ? {
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                columnGap: layout?.innerGap ?? 4,
+                width: '100%',
+                minWidth: 0,
+                alignItems: 'end',
+                marginTop: 'auto',
+                borderBottom: '2.5px solid #A78BFA',
+              } : {
+                display: 'flex',
+                alignItems: 'flex-end',
+                gap: 3,
+                height: chartH + 22,
+                width: '100%',
+                justifyContent: 'center',
+              }}>
+                {bars.map((b) => {
+                  const pct = large ? scorePercent(b.value, ex.maxScore) : null
+                  const scoreLabel = large
+                    ? (pct == null ? '—' : `${fmtScore(pct)}점`)
+                    : (b.value == null ? '—' : fmtScore(b.value))
+                  const scoreFont = layout
+                    ? fitFontSize(scoreLabel, layout.colW, layout.scoreMax, 9)
+                    : 10
+                  const caption = layout ? barCaption(b.label, layout.labelMode) : ''
+                  return (
+                    <div
+                      key={b.label}
+                      title={large
+                        ? `${b.label} ${pct == null ? '—' : `${fmtScore(pct)}점`}`
+                        : `${b.label} ${b.value == null ? '—' : `${fmtScore(b.value)}점`}`}
+                      style={{
+                        width: large ? '100%' : 10,
+                        minWidth: 0,
+                        height: '100%',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'flex-end',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {large && caption && (
+                        <div style={{
+                          fontSize: layout?.labelFont ?? 11,
+                          fontWeight: 700,
+                          color: b.color,
+                          marginBottom: 4,
+                          lineHeight: 1.15,
+                          textAlign: 'center',
+                          width: '100%',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {caption}
+                        </div>
+                      )}
+                      {large && (
+                        <div style={{
+                          fontSize: scoreFont,
+                          fontWeight: 800,
+                          color: b.value == null ? 'var(--slate3)' : b.color,
+                          marginBottom: 8,
+                          lineHeight: 1.1,
+                          textAlign: 'center',
+                          width: '100%',
+                          overflow: 'hidden',
+                          whiteSpace: 'nowrap',
+                        }}>
+                          {scoreLabel}
+                        </div>
+                      )}
+                      <div style={{
+                        width: large ? layout?.barW : 10,
+                        maxWidth: '100%',
+                        height: barHeight(b.value, max, chartH),
+                        background: b.value == null ? 'var(--bg3)' : b.color,
+                        ...(large ? { border: '2px solid #7C3AED' } : {}),
+                        borderRadius: large ? '8px 8px 0 0' : '3px 3px 1px 1px',
+                        opacity: b.value == null ? 0.4 : 1,
+                      }} />
+                    </div>
+                  )
+                })}
+              </div>
+              {!large && (
+                <div style={{
+                  fontSize: 10,
+                  color: 'var(--slate2)',
+                  marginTop: 6,
+                  textAlign: 'center',
+                  width: '100%',
+                  lineHeight: 1.35,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>
+                  {ex.label}
+                </div>
+              )}
+              {!large && ex.sub && (
+                <div style={{
+                  fontSize: 9,
+                  color: 'var(--slate3)',
+                  marginTop: 2,
+                  maxWidth: '100%',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}>{ex.sub}</div>
+              )}
             </div>
-            {ex.sub && <div style={{ fontSize: 9, color: 'var(--slate3)' }}>{ex.sub}</div>}
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -421,6 +685,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
   const [examId, setExamId] = useState<number | null>(null)
   const [statsExamId, setStatsExamId] = useState<number | null>(null)
   const [studentId, setStudentId] = useState<number | null>(null)
+  const [focusExamId, setFocusExamId] = useState<number | null>(null)
   const [title, setTitle] = useState('')
   const [date, setDate] = useState(ymd(new Date()))
   const [subject, setSubject] = useState('')
@@ -511,6 +776,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       setSearchParams({}, { replace: true })
     }
     if (sidParam) {
+      setFocusExamId(null)
       setStudentId(Number(sidParam))
       setView('student')
     }
@@ -597,13 +863,20 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       for (const row of exam.scores ?? []) {
         const sections: Record<number, SectionScoreDraft> = {}
         for (const ss of row.sectionScores ?? []) {
+          const meta = (exam.sections ?? []).find((sec) => sec.id === ss.sectionId)
+          const score = ss.score == null ? '' : String(ss.score)
           sections[ss.sectionId] = {
-            score: ss.score == null ? '' : String(ss.score),
-            percent: ss.percent == null ? '' : String(ss.percent),
+            score,
+            percent: score === '' || !meta ? '' : calcPercent(score, meta.maxScore),
           }
         }
+        const summed = (exam.sections ?? []).length > 0
+          ? weightedSectionTotal(sections, exam.sections ?? [])
+          : null
         draft[row.studentId] = {
-          score: row.score == null ? '' : String(row.score),
+          score: (exam.sections ?? []).length > 0
+            ? (summed == null ? '' : String(Math.min(summed, exam.maxScore)))
+            : (row.score == null ? '' : String(row.score)),
           comment: row.comment ?? '',
           sections,
         }
@@ -647,11 +920,17 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       showToast('과목 배점은 0~1000점 사이로 입력하세요.')
       return
     }
+    const weightSum = cleanedSections.reduce((sum, s) => sum + (s.weight > 0 ? s.weight : s.maxScore), 0)
+    const resolvedMax = cleanedSections.length > 0 ? weightSum : maxScore
+    if (cleanedSections.length > 0 && resolvedMax < 1) {
+      showToast('배점 합계가 1점 이상이어야 전체 만점이 됩니다.')
+      return
+    }
     const payload = {
       title: examTitle,
       date,
       subject,
-      maxScore,
+      maxScore: resolvedMax,
       targetGrade: lockedKind === 'ALL' ? (targetGrade || null) : null,
       classroomIds,
       sections: cleanedSections,
@@ -715,26 +994,27 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
     try {
       const records = roster.map((r) => {
         const d = scoreDraft[r.studentId] ?? emptyScoreDraft()
-        const raw = d.score.trim()
-        let score = raw === '' ? null : Number(raw)
-        if (score != null && (Number.isNaN(score) || score < 0 || score > detail.maxScore)) {
-          throw new Error(`${r.studentName}: 전체 점수는 0~${detail.maxScore}점 사이로 입력하세요.`)
+        const hasSections = (detail.sections ?? []).length > 0
+        let score: number | null = null
+        if (!hasSections) {
+          const raw = d.score.trim()
+          score = raw === '' ? null : Number(raw)
+          if (score != null && (Number.isNaN(score) || score < 0 || score > detail.maxScore)) {
+            throw new Error(`${r.studentName}: 전체 점수는 0~${detail.maxScore}점 사이로 입력하세요.`)
+          }
         }
         const sectionScores = (detail.sections ?? []).map((sec) => {
           const sd = d.sections[sec.id] ?? { score: '', percent: '' }
           const secScore = sd.score.trim() === '' ? null : Number(sd.score)
-          const secPercent = sd.percent.trim() === '' ? null : Number(sd.percent)
           if (secScore != null && (Number.isNaN(secScore) || secScore < 0 || secScore > sec.maxScore)) {
-            throw new Error(`${r.studentName}: ${sec.name} 실제 점수는 0~${sec.maxScore}점 사이로 입력하세요.`)
+            throw new Error(`${r.studentName}: ${sec.name} 점수는 0~${sec.maxScore}점 사이로 입력하세요.`)
           }
-          if (secPercent != null && (Number.isNaN(secPercent) || secPercent < 0 || secPercent > 100)) {
-            throw new Error(`${r.studentName}: ${sec.name} 백분율 점수는 0~100 사이로 입력하세요.`)
-          }
+          const secPercent = secScore == null ? null : Number(calcPercent(String(secScore), sec.maxScore))
           return { sectionId: sec.id, score: secScore, percent: secPercent }
         })
-        if (score == null) {
+        if (hasSections) {
           const sum = weightedSectionTotal(d.sections, detail.sections ?? [])
-          if (sum != null) score = Math.min(sum, detail.maxScore)
+          score = sum == null ? null : Math.min(sum, detail.maxScore)
         }
         return { studentId: r.studentId, score, comment: d.comment, sectionScores }
       })
@@ -778,16 +1058,21 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       for (const rec of records) {
         const sections: Record<number, SectionScoreDraft> = {}
         for (const ss of rec.sections) {
+          const meta = (detail.sections ?? []).find((sec) => sec.id === ss.sectionId)
+          const score = ss.score == null ? '' : String(ss.score)
           sections[ss.sectionId] = {
-            score: ss.score == null ? '' : String(ss.score),
-            percent: ss.percent == null ? '' : String(ss.percent),
+            score,
+            percent: score === '' || !meta ? '' : calcPercent(score, meta.maxScore),
           }
         }
         const cur = next[rec.studentId] ?? emptyScoreDraft()
         const merged = { ...cur.sections, ...sections }
+        const hasSections = (detail.sections ?? []).length > 0
         const sum = weightedSectionTotal(merged, detail.sections ?? [])
         next[rec.studentId] = {
-          score: rec.score == null ? (sum == null ? cur.score : String(Math.min(sum, detail.maxScore))) : String(rec.score),
+          score: hasSections
+            ? (sum == null ? '' : String(Math.min(sum, detail.maxScore)))
+            : (rec.score == null ? cur.score : String(rec.score)),
           comment: rec.comment || cur.comment,
           sections: merged,
         }
@@ -858,9 +1143,29 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
             )}
             <label className="input-label">과목 (선택)</label>
             <input className="input-field" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="예: 영어" />
-            <label className="input-label">전체 만점</label>
-            <input className="input-field" type="number" min={1} max={1000} value={maxScore}
-              onChange={(e) => setMaxScore(Number(e.target.value) || 100)} />
+            {sectionDrafts.some((s) => s.name.trim()) ? (
+              <div style={{ margin: '4px 0 12px' }}>
+                <div className="input-label" style={{ marginBottom: 4 }}>전체 만점</div>
+                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--navy)' }}>
+                  {sectionDrafts.reduce((sum, s) => {
+                    if (!s.name.trim()) return sum
+                    const weight = Number(s.weight)
+                    const max = Number(s.maxScore) || 0
+                    return sum + (weight > 0 ? weight : max)
+                  }, 0)}점
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--slate2)', marginTop: 4 }}>배점 합계로 자동 계산됩니다.</div>
+              </div>
+            ) : (
+              <>
+                <label className="input-label">전체 만점</label>
+                <input className="input-field" type="number" min={1} max={1000} value={maxScore}
+                  onChange={(e) => setMaxScore(Number(e.target.value) || 100)} />
+                <div style={{ fontSize: 12, color: 'var(--slate2)', margin: '-4px 0 10px' }}>
+                  과목을 추가하면 전체 만점은 배점 합계로 바뀝니다.
+                </div>
+              </>
+            )}
             <label className="input-label">과목 구성</label>
             <div style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8, lineHeight: 1.5 }}>
               독해·리딩·문법처럼 과목을 추가하면 만점과 배점을 따로 둘 수 있습니다. 배점이 비어 있으면 만점과 같게 계산됩니다.
@@ -935,19 +1240,9 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                 + 과목 추가
               </button>
             )}
-            {sectionDrafts.length > 0 && (
+            {sectionDrafts.some((s) => s.name.trim()) && (
               <div style={{ fontSize: 12, color: 'var(--slate2)', margin: '8px 0 12px' }}>
-                배점 합계 {sectionDrafts.reduce((sum, s) => sum + (Number(s.weight) || Number(s.maxScore) || 0), 0)}점
-                <button
-                  type="button"
-                  style={{ marginLeft: 8, border: 0, background: 'none', color: 'var(--acc)', fontWeight: 700, cursor: 'pointer', padding: 0 }}
-                  onClick={() => {
-                    const sum = sectionDrafts.reduce((acc, s) => acc + (Number(s.weight) || Number(s.maxScore) || 0), 0)
-                    if (sum >= 1) setMaxScore(sum)
-                  }}
-                >
-                  전체 만점에 반영
-                </button>
+                배점을 바꾸면 전체 만점도 같이 바뀝니다. 배점이 비어 있으면 그 과목 만점으로 합산됩니다.
               </div>
             )}
             <button className="btn-primary" disabled={saving} onClick={() => void handleSaveMeta()}>
@@ -972,7 +1267,8 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       : scoreClassId
     const visible = rows.filter((r) => activeClassId === 'all' || r.classroomId === activeClassId)
     const sections = detail.sections ?? []
-    const colCount = 1 + sections.length * 2 + 1
+    const hasSections = sections.length > 0
+    const commentCol = hasSections ? sections.length : 1
     const patchSection = (studentId: number, sec: ExamSection, score: string) => {
       setScoreDraft((prev) => {
         const cur = prev[studentId] ?? emptyScoreDraft()
@@ -985,7 +1281,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
           ...prev,
           [studentId]: {
             ...cur,
-            score: sum == null ? cur.score : String(Math.min(sum, detail.maxScore)),
+            score: sum == null ? '' : String(Math.min(sum, detail.maxScore)),
             sections: nextSections,
           },
         }
@@ -1074,7 +1370,9 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
               </div>
             )}
             <div style={{ fontSize: 12, color: 'var(--slate2)', margin: '8px 0' }}>
-              점수만 입력하고 Enter로 아래 칸으로 이동합니다. 임시저장하면 중간에 나가도 유지됩니다.
+              {hasSections
+                ? '영역 점수만 입력하면 백분율과 전체 점수가 자동 계산됩니다. Enter로 아래 칸으로 이동합니다.'
+                : '점수만 입력하고 Enter로 아래 칸으로 이동합니다. 임시저장하면 중간에 나가도 유지됩니다.'}
             </div>
             <div style={{ overflowX: 'auto', border: '1px solid var(--bg3)', borderRadius: 10 }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 520, fontSize: 13 }}>
@@ -1082,26 +1380,17 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   <tr style={{ background: 'var(--bg2)', textAlign: 'left' }}>
                     <th style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>학생</th>
                     <th style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>반</th>
-                    <th style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>전체 / {detail.maxScore}</th>
+                    <th style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                      전체 / {detail.maxScore}{hasSections ? ' · 자동' : ''}
+                    </th>
                     {sections.map((sec) => (
-                      <th key={sec.id} colSpan={2} style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
-                        {sec.name} ({sec.maxScore}/{sectionWeightOf(sec)})
+                      <th key={sec.id} style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+                        {sec.name} / {sec.maxScore}
+                        {sectionWeightOf(sec) !== sec.maxScore ? ` · 배점 ${sectionWeightOf(sec)}` : ''}
                       </th>
                     ))}
                     <th style={{ padding: '8px 10px' }}>코멘트</th>
                   </tr>
-                  {sections.length > 0 && (
-                    <tr style={{ background: 'var(--bg2)', fontSize: 11, color: 'var(--slate3)' }}>
-                      <th /><th /><th />
-                      {sections.map((sec) => (
-                        <Fragment key={sec.id}>
-                          <th style={{ padding: '0 10px 8px', fontWeight: 600 }}>실제</th>
-                          <th style={{ padding: '0 10px 8px', fontWeight: 600 }}>%</th>
-                        </Fragment>
-                      ))}
-                      <th />
-                    </tr>
-                  )}
                 </thead>
                 <tbody>
                   {visible.map((r, rowIdx) => {
@@ -1111,68 +1400,50 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                         <td style={{ padding: '6px 10px', fontWeight: 700, color: 'var(--navy)', whiteSpace: 'nowrap' }}>{r.studentName}</td>
                         <td style={{ padding: '6px 10px', color: 'var(--slate2)', whiteSpace: 'nowrap' }}>{r.classroomName || '—'}</td>
                         <td style={{ padding: '4px 6px' }}>
-                          <input
-                            className="input-field"
-                            data-score-cell={`0-${rowIdx}`}
-                            style={{ margin: 0, textAlign: 'right', minWidth: 72 }}
-                            inputMode="decimal"
-                            placeholder="미응시"
-                            value={draft.score}
-                            onChange={(e) => setScoreDraft((prev) => ({
-                              ...prev,
-                              [r.studentId]: { ...(prev[r.studentId] ?? emptyScoreDraft()), score: e.target.value },
-                            }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(0, rowIdx + 1) } }}
-                          />
+                          {hasSections ? (
+                            <div style={{ textAlign: 'right', fontWeight: 800, color: 'var(--navy)', minWidth: 56, padding: '8px 4px' }}>
+                              {draft.score === '' ? '—' : draft.score}
+                            </div>
+                          ) : (
+                            <input
+                              className="input-field"
+                              data-score-cell={`0-${rowIdx}`}
+                              style={{ margin: 0, textAlign: 'right', minWidth: 72 }}
+                              inputMode="decimal"
+                              placeholder="미응시"
+                              value={draft.score}
+                              onChange={(e) => setScoreDraft((prev) => ({
+                                ...prev,
+                                [r.studentId]: { ...(prev[r.studentId] ?? emptyScoreDraft()), score: e.target.value },
+                              }))}
+                              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(0, rowIdx + 1) } }}
+                            />
+                          )}
                         </td>
                         {sections.map((sec, si) => {
                           const sd = draft.sections[sec.id] ?? { score: '', percent: '' }
-                          const scoreCol = 1 + si * 2
-                          const pctCol = scoreCol + 1
+                          const pct = sd.score.trim() === '' ? '' : calcPercent(sd.score, sec.maxScore)
                           return (
-                            <Fragment key={sec.id}>
-                              <td style={{ padding: '4px 6px' }}>
-                                <input
-                                  className="input-field"
-                                  data-score-cell={`${scoreCol}-${rowIdx}`}
-                                  style={{ margin: 0, textAlign: 'right', minWidth: 64 }}
-                                  inputMode="decimal"
-                                  value={sd.score}
-                                  onChange={(e) => patchSection(r.studentId, sec, e.target.value)}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(scoreCol, rowIdx + 1) } }}
-                                />
-                              </td>
-                              <td style={{ padding: '4px 6px' }}>
-                                <input
-                                  className="input-field"
-                                  data-score-cell={`${pctCol}-${rowIdx}`}
-                                  style={{ margin: 0, textAlign: 'right', minWidth: 56 }}
-                                  inputMode="decimal"
-                                  value={sd.percent}
-                                  onChange={(e) => {
-                                    const percent = e.target.value
-                                    setScoreDraft((prev) => {
-                                      const cur = prev[r.studentId] ?? emptyScoreDraft()
-                                      const prevSec = cur.sections[sec.id] ?? { score: '', percent: '' }
-                                      return {
-                                        ...prev,
-                                        [r.studentId]: {
-                                          ...cur,
-                                          sections: { ...cur.sections, [sec.id]: { ...prevSec, percent } },
-                                        },
-                                      }
-                                    })
-                                  }}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(pctCol, rowIdx + 1) } }}
-                                />
-                              </td>
-                            </Fragment>
+                            <td key={sec.id} style={{ padding: '4px 6px' }}>
+                              <input
+                                className="input-field"
+                                data-score-cell={`${si}-${rowIdx}`}
+                                style={{ margin: 0, textAlign: 'right', minWidth: 72 }}
+                                inputMode="decimal"
+                                value={sd.score}
+                                onChange={(e) => patchSection(r.studentId, sec, e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(si, rowIdx + 1) } }}
+                              />
+                              <div style={{ fontSize: 11, color: 'var(--slate3)', textAlign: 'right', marginTop: 2, minHeight: 14 }}>
+                                {pct === '' ? '' : `${pct}%`}
+                              </div>
+                            </td>
                           )
                         })}
                         <td style={{ padding: '4px 6px' }}>
                           <input
                             className="input-field"
-                            data-score-cell={`${colCount - 1}-${rowIdx}`}
+                            data-score-cell={`${commentCol}-${rowIdx}`}
                             style={{ margin: 0, minWidth: 120 }}
                             placeholder="선택"
                             value={draft.comment}
@@ -1180,7 +1451,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                               ...prev,
                               [r.studentId]: { ...(prev[r.studentId] ?? emptyScoreDraft()), comment: e.target.value },
                             }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(colCount - 1, rowIdx + 1) } }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusCell(commentCol, rowIdx + 1) } }}
                           />
                         </td>
                       </tr>
@@ -1240,10 +1511,14 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
         </>
       )
     }
-    const dlt = deltaLabel(history.latestDelta)
     const chrono = [...history.items].slice().reverse()
-    const latest = history.items[0]
-    const latestMax = latest?.maxScore ?? 100
+    const shown = focusExamId != null
+      ? history.items.find((it) => it.examId === focusExamId) ?? null
+      : history.items[0] ?? null
+    const shownTitle = shown?.title
+      ?? (stats?.examId === focusExamId ? stats.title : '')
+    const shownMax = shown?.maxScore ?? 100
+    const dlt = deltaLabel(shown?.delta)
     return (
       <>
         <TopBar title={`${history.studentName} 성적`} sub={history.classroomName} onBack={() => setView('list')} />
@@ -1255,15 +1530,15 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
           <div className="sec">
             <div style={{ display: 'flex', gap: 10 }}>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: '#64748B' }}>{fmtScore(latest?.examAvg)}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: '#64748B' }}>{shown?.examAvg == null ? '—' : `${fmtScore(shown.examAvg)}점`}</div>
                 <div style={{ fontSize: 11, color: 'var(--slate2)' }}>전체평균</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--acc2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--acc)' }}>{fmtScore(latest?.classAvg)}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--acc)' }}>{shown?.classAvg == null ? '—' : `${fmtScore(shown.classAvg)}점`}</div>
                 <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내가 속한 반평균</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--ok)' }}>{fmtScore(latest?.score)}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--ok)' }}>{shown?.score == null ? '—' : `${fmtScore(shown.score)}점`}</div>
                 <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내 점수</div>
                 {dlt && <div style={{ fontSize: 11, fontWeight: 700, color: dlt.color, marginTop: 4 }}>{dlt.text}</div>}
               </div>
@@ -1292,33 +1567,33 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
               filename={`${history.studentName}_점수비교`}
               onError={showToast}
             />
-            <div className="card" style={{ padding: 14 }}>
+            <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
               <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
-                {latest && (
-                  <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--navy)' }}>{latest.title}</div>
+                {shownTitle && (
+                  <div data-capture-text="" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)' }}>{shownTitle}</div>
                 )}
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)', marginTop: latest ? 6 : 0 }}>
-                  {[latest?.classroomName || history.classroomName, history.studentName].filter(Boolean).join(' · ') || history.studentName}
+                <div data-capture-text="" style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)', marginTop: shownTitle ? 6 : 0 }}>
+                  {[shown?.classroomName || history.classroomName, history.studentName].filter(Boolean).join(' · ') || history.studentName}
                 </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--slate)', marginTop: 6 }}>
-                  {latest?.rank != null && latest?.rankedCount != null
-                    ? `전체 ${latest.rankedCount}명 중 ${latest.rank}등`
+                <div data-capture-text="" style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.6, color: 'var(--slate)', marginTop: 6 }}>
+                  {shown?.rank != null && shown?.rankedCount != null
+                    ? `전체 ${shown.rankedCount}명 중 ${shown.rank}등`
                     : '전체 등수 —'}
                   {' · '}
-                  {latest?.classRank != null && latest?.classRankedCount != null
-                    ? `해당 반 ${latest.classRankedCount}명 중 ${latest.classRank}등`
+                  {shown?.classRank != null && shown?.classRankedCount != null
+                    ? `해당 반 ${shown.classRankedCount}명 중 ${shown.classRank}등`
                     : '해당 반 등수 —'}
                 </div>
               </div>
               <ThreeScoreBars
-                examAvg={latest?.examAvg ?? null}
-                classAvg={latest?.classAvg ?? null}
-                myScore={latest?.score ?? null}
-                maxScore={latestMax}
+                examAvg={shown?.examAvg ?? null}
+                classAvg={shown?.classAvg ?? null}
+                myScore={shown?.score ?? null}
+                maxScore={shownMax}
               />
             </div>
           </div>
-          {(latest?.sectionScores?.length ?? 0) > 0 && (
+          {(shown?.sectionScores?.length ?? 0) > 0 && (
             <div className="sec" ref={studentSubjectRef}>
               <SecHead
                 title="과목별 점수 비교"
@@ -1326,19 +1601,31 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                 filename={`${history.studentName}_과목별점수비교`}
                 onError={showToast}
               />
-              <div className="card" style={{ padding: 14 }}>
-                {latest && (
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--navy)', marginBottom: 10 }}>{latest.title}</div>
-                )}
+                <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
+                <div style={{ marginBottom: 10 }}>
+                  {shownTitle && (
+                    <div data-capture-text="" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)' }}>{shownTitle}</div>
+                  )}
+                  <div data-capture-text="" style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)', marginTop: shownTitle ? 4 : 0 }}>
+                    {[shown?.classroomName || history.classroomName, history.studentName].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
                 <ExamCompareBars
-                  exams={(latest?.sectionScores ?? []).map((sec) => ({
+                  size="large"
+                  exams={(shown?.sectionScores ?? []).map((sec) => ({
                     key: String(sec.sectionId),
                     label: sec.name,
-                    sub: `만점 ${sec.maxScore}`,
+                    sub: sec.score == null
+                      ? `만점 ${fmtScore(sec.maxScore)}점`
+                      : `${fmtScore(sec.score)}/${fmtScore(sec.maxScore)} - ${fmtScore(scorePercent(sec.score, sec.maxScore))}점`,
                     myScore: sec.score,
                     examAvg: sec.examAvg ?? null,
                     classAvg: sec.classAvg ?? null,
                     maxScore: sec.maxScore,
+                    rank: sec.rank ?? null,
+                    rankedCount: sec.rankedCount ?? null,
+                    classRank: sec.classRank ?? null,
+                    classRankedCount: sec.classRankedCount ?? null,
                   }))}
                 />
               </div>
@@ -1582,7 +1869,12 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   <div data-skip-capture="" style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>학생을 누르면 회차별 꺾은선 그래프를 볼 수 있습니다.</div>
                   {(stats.ranking ?? []).map((r) => (
                     <div key={r.studentId} className="card" style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}
-                      onClick={() => { setHistory(null); setStudentId(r.studentId); setView('student') }}>
+                      onClick={() => {
+                        setHistory(null)
+                        setFocusExamId(stats.examId ?? statsExamId)
+                        setStudentId(r.studentId)
+                        setView('student')
+                      }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <div style={{
                           width: 32, height: 32, borderRadius: 8, background: 'var(--acc2)', color: 'var(--acc)',
