@@ -35,6 +35,7 @@ export default function PaymentMessagePage() {
   const unpaidParents = useMemo((): UnpaidGuardian[] => {
     const map = new Map<string, UnpaidGuardian>()
     for (const s of students) {
+      if (s.status === '퇴원') continue
       if (isFullPaid(s)) continue
       const key = s.parentPhone.replace(/[^\d]/g, '')
       if (!key) continue

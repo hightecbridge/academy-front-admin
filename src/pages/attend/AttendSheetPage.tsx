@@ -217,7 +217,7 @@ export default function AttendSheetPage() {
         .filter((r) => r.status === '출석')
         .map((r) => r.sid),
     )
-    const presentStudents = stuInClass.filter((s) => presentStudentIds.has(s.sid))
+    const presentStudents = stuInClass.filter((s) => presentStudentIds.has(s.sid) && s.status !== '퇴원')
     const academyName = user?.academyName?.trim() || cls.name
     const requestDateTime = formatAttendAppliedAt(existing.createdAt)
     const template = notifyMessage.trim()
@@ -556,7 +556,7 @@ export default function AttendSheetPage() {
               </button>
             </div>
             <div style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>
-              대상: {cls.name} 학부모 {new Set(stuInClass.map((s) => s.parentPhone.replace(/[^\d]/g, ''))).size}명
+              대상: {cls.name} 학부모 {new Set(stuInClass.filter((s) => s.status !== '퇴원').map((s) => s.parentPhone.replace(/[^\d]/g, ''))).size}명
             </div>
             <label className="input-label" style={{ marginTop: 0 }}>발신 번호</label>
             <select

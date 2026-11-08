@@ -228,7 +228,11 @@ export default function MessagePage() {
   const saveMessageSendLog = useDataStore((s) => s.saveMessageSendLog)
   const { ref: toastRef, show: showToast } = useToast()
 
-  const allStu = students
+  const activeStudents = React.useMemo(
+    () => students.filter((s) => s.status !== '퇴원'),
+    [students],
+  )
+  const allStu = activeStudents
   const unpaid = allStu.filter((s) => !isFullPaid(s))
 
   const [chips, setChips] = useState<boolean[]>(() => classes.map((_, i) => i === 0))
@@ -251,15 +255,15 @@ export default function MessagePage() {
 
   const buildClassRecipients = React.useCallback((): MessageRecipient[] => {
     if (selectedClassItems.length === 0) return []
-    const matched = students.filter((s) =>
+    const matched = activeStudents.filter((s) =>
       selectedClassItems.some((cls) => studentInClass(s, cls)),
     )
     return recipientsFromStudents(matched)
-  }, [students, selectedClassItems])
+  }, [activeStudents, selectedClassItems])
 
   const buildAllRecipients = React.useCallback((): MessageRecipient[] => {
-    return recipientsFromStudents(students)
-  }, [students])
+    return recipientsFromStudents(activeStudents)
+  }, [activeStudents])
 
   const classRecipients = React.useMemo(() => buildClassRecipients(), [buildClassRecipients])
   const allRecipients = React.useMemo(() => buildAllRecipients(), [buildAllRecipients])
@@ -268,8 +272,8 @@ export default function MessagePage() {
     [classRecipients],
   )
   const studentKey = React.useMemo(
-    () => students.map((s) => s.sid).join(','),
-    [students],
+    () => activeStudents.map((s) => `${s.sid}:${s.status}`).join(','),
+    [activeStudents],
   )
 
   const [checkedClassParentIds, setCheckedClassParentIds] = useState<Set<string>>(new Set())
@@ -406,6 +410,21 @@ export default function MessagePage() {
   }
 
   const [checkedUnpaid, setCheckedUnpaid] = useState<Set<number>>(() => new Set(unpaid.map((s) => s.sid)))
+  const unpaidIdsKey = unpaid.map((s) => s.sid).join(',')
+  React.useEffect(() => {
+    const allowed = new Set(
+      unpaidIdsKey.length === 0 ? [] : unpaidIdsKey.split(',').map((id) => Number(id)),
+    )
+    setCheckedUnpaid((prev) => {
+      let changed = false
+      const next = new Set<number>()
+      prev.forEach((id) => {
+        if (allowed.has(id)) next.add(id)
+        else changed = true
+      })
+      return changed ? next : prev
+    })
+  }, [unpaidIdsKey])
   const [unpaidSearch, setUnpaidSearch] = useState('')
   const filteredUnpaid = React.useMemo(() => {
     const q = unpaidSearch.trim()
