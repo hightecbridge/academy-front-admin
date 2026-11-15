@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx'
-import type { ExamItem, ExamScoreRow } from '../types'
+import { utils as styleUtils, writeFile as writeStyledFile, type CellStyle } from 'xlsx-js-style'
+import type { ExamItem, ExamScoreRow, ExamStats } from '../types'
 
 export type ExamExcelRecord = {
   studentId: number
@@ -38,6 +39,62 @@ function headersFor(exam: ExamItem): string[] {
 function percentOf(score: number, maxScore: number): number | null {
   if (maxScore <= 0) return null
   return Math.round((score * 1000) / maxScore) / 10
+}
+
+function excelName(name: string) {
+  const cleaned = name.replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim()
+  return (cleaned || '시험').slice(0, 80)
+}
+
+function excelNum(v: number | null | undefined): number | '' {
+  return v == null || Number.isNaN(v) ? '' : v
+}
+
+export function downloadRankingExcel(stats: Pick<ExamStats, 'title' | 'average' | 'ranking'>) {
+  const ranking = stats.ranking ?? []
+  const sections: { sectionId: number; name: string }[] = []
+  const seen = new Set<number>()
+  for (const row of ranking) {
+    for (const sec of row.sections ?? []) {
+      if (sec.sectionId == null || seen.has(sec.sectionId)) continue
+      seen.add(sec.sectionId)
+      sections.push({ sectionId: sec.sectionId, name: (sec.name || '영역').trim() || '영역' })
+    }
+  }
+  const headers = ['레벨통합석차', '클래스석차', '이름', '반명', '전체평균', '클래스평균', '내점수']
+  for (const sec of sections) {
+    headers.push(`${sec.name} 전체평균`, `${sec.name}점수`)
+  }
+  const data: (string | number)[][] = [headers]
+  for (const row of ranking) {
+    const line: (string | number)[] = [
+      excelNum(row.rank),
+      excelNum(row.classRank),
+      row.studentName ?? '',
+      row.classroomName ?? '',
+      excelNum(stats.average),
+      excelNum(row.classAvg),
+      excelNum(row.score),
+    ]
+    for (const sec of sections) {
+      const found = (row.sections ?? []).find((item) => item.sectionId === sec.sectionId)
+      line.push(excelNum(found?.examAvg), excelNum(found?.score))
+    }
+    data.push(line)
+  }
+  const ws = styleUtils.aoa_to_sheet(data)
+  const headerStyle: CellStyle = {
+    font: { bold: true },
+    alignment: { horizontal: 'center', vertical: 'center' },
+  }
+  headers.forEach((_, index) => {
+    const cell = ws[styleUtils.encode_cell({ r: 0, c: index })]
+    if (cell) cell.s = headerStyle
+  })
+  ws['!cols'] = headers.map((h) => ({ wch: Math.max(12, h.length * 2 + 2) }))
+  const wb = styleUtils.book_new()
+  styleUtils.book_append_sheet(wb, ws, '학생별순위')
+  writeStyledFile(wb, `${excelName(stats.title)}_학생순위.xlsx`)
 }
 
 export function downloadExamScoreTemplate(exam: ExamItem, rows: ExamScoreRow[], drafts?: Record<number, {

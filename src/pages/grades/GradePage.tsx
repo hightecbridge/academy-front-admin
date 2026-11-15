@@ -1,13 +1,15 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { flushSync } from 'react-dom'
+import { createRoot } from 'react-dom/client'
 import { useSearchParams } from 'react-router-dom'
 import { TopBar, Fab, Breadcrumb, useToast, Toast } from '../../components/common'
 import { useDataStore, studentInClass } from '../../store/dataStore'
 import { useAuthStore } from '../../store/authStore'
 import type { ExamItem, ExamKind, ExamScoreRow, ExamScoreSection, ExamSection, ExamStats, GradeHistory } from '../../types'
 import { VALID_GRADES } from '../../utils/parentBulkImport'
-import { downloadExamScoreTemplate, parseExamScoreExcel } from '../../utils/examExcel'
+import { downloadExamScoreTemplate, downloadRankingExcel, parseExamScoreExcel } from '../../utils/examExcel'
 import { periodRange, ymd, type PeriodPreset } from '../../utils/examPeriod'
-import { downloadElementPng } from '../../utils/downloadPng'
+import { downloadComposedPng, downloadElementPng } from '../../utils/downloadPng'
 import {
   closeRegularExam,
   createRegularExam,
@@ -160,10 +162,13 @@ function deltaLabel(d: number | null | undefined) {
   return { text: '변동 없음', color: 'var(--slate2)' }
 }
 
+const COLOR_EXAM_AVG = '#64748B'
+const COLOR_MY_SCORE = '#C75B7A'
+
 const BAR = {
-  examAvg: { label: '전체평균', color: '#64748B' },
+  examAvg: { label: '전체평균', color: COLOR_EXAM_AVG },
   classAvg: { label: '반평균', color: 'var(--acc)' },
-  mine: { label: '내 점수', color: 'var(--ok)' },
+  mine: { label: '내 점수', color: COLOR_MY_SCORE },
 } as const
 
 function BarLegend({ marginBottom = 10 }: { marginBottom?: number }) {
@@ -222,6 +227,37 @@ function ImageSaveButton({
   )
 }
 
+function RankingExcelButton({
+  stats,
+  onError,
+}: {
+  stats: ExamStats
+  onError: (msg: string) => void
+}) {
+  const [busy, setBusy] = useState(false)
+  return (
+    <button
+      type="button"
+      data-skip-capture=""
+      className="btn-secondary"
+      disabled={busy || (stats.ranking ?? []).length === 0}
+      onClick={() => {
+        setBusy(true)
+        try {
+          downloadRankingExcel(stats)
+        } catch {
+          onError('엑셀 다운로드에 실패했습니다.')
+        } finally {
+          setBusy(false)
+        }
+      }}
+      style={{ width: 'auto', padding: '5px 10px', fontSize: 12, fontWeight: 700, marginTop: 0, flexShrink: 0 }}
+    >
+      {busy ? '저장 중...' : '엑셀 다운로드'}
+    </button>
+  )
+}
+
 function SecHead({
   title,
   getTarget,
@@ -234,7 +270,7 @@ function SecHead({
   onError: (msg: string) => void
 }) {
   return (
-    <div className="sec-title" data-skip-capture="" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+    <div className="sec-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
       <span>{title}</span>
       <ImageSaveButton getTarget={getTarget} filename={filename} onError={onError} />
     </div>
@@ -302,7 +338,7 @@ function ThreeScoreBars({
 function ScoreBars({
   points,
 }: {
-  points: { key: string; label: string; value: number | null; max?: number; sub?: string }[]
+  points: { key: string; label: string; value: number | null; max?: number; sub?: string; color?: string }[]
 }) {
   const max = Math.max(1, ...points.map((p) => p.max ?? p.value ?? 0), 100)
   if (points.length === 0) {
@@ -312,12 +348,13 @@ function ScoreBars({
     <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 160, padding: '0 4px' }}>
       {points.map((p) => {
         const h = barHeight(p.value, max, 120)
+        const color = p.color ?? 'var(--acc)'
         return (
           <div key={p.key} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end' }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--navy)', marginBottom: 4 }}>{p.value == null ? '—' : fmtScore(p.value)}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: p.value == null ? 'var(--slate3)' : (p.color ?? 'var(--navy)'), marginBottom: 4 }}>{p.value == null ? '—' : fmtScore(p.value)}</div>
             <div style={{
               width: '70%', maxWidth: 28, height: h,
-              background: p.value == null ? 'var(--bg3)' : 'var(--acc)',
+              background: p.value == null ? 'var(--bg3)' : color,
               borderRadius: '5px 5px 2px 2px', opacity: p.value == null ? 0.5 : 1,
             }} />
             <div style={{
@@ -405,7 +442,7 @@ function ExamCompareBars({
   const large = size === 'large'
   const rowRef = useRef<HTMLDivElement>(null)
   const [rowWidth, setRowWidth] = useState(0)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = rowRef.current
     if (!el || !large) return
     const apply = () => setRowWidth(el.clientWidth)
@@ -671,6 +708,474 @@ function TrendLine({
   )
 }
 
+type ReportPick = { on: boolean; order: string }
+
+type ReportCatalogItem = {
+  key: string
+  group: 'image' | 'area'
+  label: string
+  hint?: string
+  node: HTMLElement | null
+  section?: ExamScoreSection
+}
+
+const REPORT_DEFAULT_OFF = new Set(['img:subject', 'stu:subject', 'stat:dist', 'stat:rank'])
+
+function withDefaultPicks(prev: Record<string, ReportPick>, items: { key: string }[]) {
+  const next = { ...prev }
+  let changed = false
+  items.forEach((item, i) => {
+    if (!next[item.key]) {
+      next[item.key] = { on: !REPORT_DEFAULT_OFF.has(item.key), order: String(i + 1) }
+      changed = true
+    }
+  })
+  return changed ? next : prev
+}
+
+function RankHighlight({ rank, classRank }: { rank?: number | null; classRank?: number | null }) {
+  const items = [
+    { label: 'LEVEL 통합석차', value: rank == null ? '—' : `${rank}위`, color: '#5B21B6', bg: '#EDE9FE' },
+    { label: 'CLASS내 석차', value: classRank == null ? '—' : `${classRank}위`, color: '#6C63FF', bg: '#F4F1FF' },
+  ]
+  return (
+    <div data-capture-text="" style={{ display: 'flex', gap: 10 }}>
+      {items.map((item) => (
+        <div key={item.label} style={{
+          flex: 1,
+          textAlign: 'center',
+          background: item.bg,
+          border: `2px solid ${item.color}`,
+          borderRadius: 12,
+          padding: '12px 8px',
+        }}>
+          <div style={{ fontSize: 26, fontWeight: 800, color: item.color, lineHeight: 1.15 }}>{item.value}</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: item.color, marginTop: 4 }}>{item.label}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function statsReportCatalog(
+  title: string,
+  sections: { id: number; name: string }[],
+  hasClass: boolean,
+  hasDist: boolean,
+  hasRank: boolean,
+) {
+  const items: { key: string; label: string; group: 'image' | 'area' }[] = [
+    { key: 'stat:summary', label: `${title} 통계`, group: 'image' },
+  ]
+  if (hasClass) items.push({ key: 'stat:class', label: '반별 평균', group: 'image' })
+  if (hasDist) items.push({ key: 'stat:dist', label: '성적 분포', group: 'image' })
+  if (hasRank) items.push({ key: 'stat:rank', label: '학생별 순위', group: 'image' })
+  items.push(
+    { key: 'stu:summary', label: '점수 요약', group: 'image' },
+    { key: 'stu:compare', label: '점수 비교', group: 'image' },
+    { key: 'stu:trend', label: '회차별 추이', group: 'image' },
+  )
+  if (sections.length > 0) items.push({ key: 'stu:subject', label: '세부영역 비교', group: 'image' })
+  sections.forEach((sec) => items.push({ key: `area:${sec.id}`, label: sec.name, group: 'area' }))
+  items.push(
+    { key: 'stu:exams', label: '시험별 비교', group: 'image' },
+    { key: 'stu:list', label: '시험별 성적', group: 'image' },
+  )
+  return items
+}
+
+const REPORT_LAYOUT_KEY = 'hiacademy.reportLayouts'
+
+type ReportLayoutItem = { key: string; label: string; on: boolean; order: string }
+type ReportLayoutKind = 'stats' | 'student'
+type ReportLayout = { id: string; name: string; kind?: ReportLayoutKind; items: ReportLayoutItem[] }
+
+function readReportLayouts(): ReportLayout[] {
+  try {
+    const raw = localStorage.getItem(REPORT_LAYOUT_KEY)
+    const parsed = raw ? JSON.parse(raw) : []
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((row) => row && typeof row.id === 'string' && typeof row.name === 'string' && Array.isArray(row.items))
+  } catch {
+    return []
+  }
+}
+
+function writeReportLayouts(list: ReportLayout[]) {
+  localStorage.setItem(REPORT_LAYOUT_KEY, JSON.stringify(list))
+}
+
+function applySavedLayout(
+  catalog: { key: string; label: string }[],
+  saved: ReportLayoutItem[],
+): Record<string, ReportPick> {
+  const next: Record<string, ReportPick> = {}
+  catalog.forEach((item) => {
+    const found = saved.find((row) => row.key === item.key)
+      ?? (item.key.startsWith('area:')
+        ? saved.find((row) => row.key.startsWith('area:') && row.label === item.label)
+        : undefined)
+    next[item.key] = found
+      ? { on: !!found.on, order: String(found.order ?? '') }
+      : { on: false, order: '' }
+  })
+  return next
+}
+
+function checkedInOrder(items: ReportCatalogItem[], pick: Record<string, ReportPick>) {
+  return items
+    .map((item, index) => ({ item, index, state: pick[item.key] }))
+    .filter((row) => row.state?.on)
+    .sort((a, b) => {
+      const ao = a.state?.order ?? ''
+      const bo = b.state?.order ?? ''
+      const an = Number(ao)
+      const bn = Number(bo)
+      const aOk = ao.trim() !== '' && !Number.isNaN(an)
+      const bOk = bo.trim() !== '' && !Number.isNaN(bn)
+      if (aOk && bOk && an !== bn) return an - bn
+      if (aOk !== bOk) return aOk ? -1 : 1
+      return a.index - b.index
+    })
+    .map((row) => row.item)
+}
+
+function reportFrame(on: boolean): { outline: string; outlineOffset: string; borderRadius: number } | undefined {
+  if (!on) return undefined
+  return { outline: '2px solid #C4B5FD', outlineOffset: '4px', borderRadius: 12 }
+}
+
+function appendReportHeader(
+  doc: HTMLElement,
+  opts: { className: string; studentName: string; lines: string[]; academyName?: string; academyLogo?: string },
+) {
+  const head = document.createElement('div')
+  head.style.cssText = 'padding:18px 18px 16px;margin:0 0 18px;border-radius:16px;background:#F4F1FF;border:2px solid #6C63FF'
+  const brand = document.createElement('div')
+  brand.style.cssText = 'display:flex;align-items:center;gap:12px;margin-bottom:14px'
+  const logo = opts.academyLogo?.trim()
+  if (logo) {
+    const img = document.createElement('img')
+    img.src = logo
+    img.alt = ''
+    img.style.cssText = 'width:52px;height:52px;object-fit:cover;border-radius:12px;flex-shrink:0'
+    brand.appendChild(img)
+  }
+  const brandText = document.createElement('div')
+  brandText.setAttribute('data-capture-text', '')
+  brandText.textContent = `${opts.academyName?.trim() || '학원'} 정기평가 성적 분석표`
+  brandText.style.cssText = 'min-width:0;font-size:20px;font-weight:800;color:#1E1B4B;line-height:1.45'
+  brand.appendChild(brandText)
+  head.appendChild(brand)
+  opts.lines.forEach((line, index) => {
+    const p = document.createElement('div')
+    p.setAttribute('data-capture-text', '')
+    p.textContent = line
+    p.style.cssText = index === 0
+      ? 'font-size:24px;font-weight:800;color:#1E1B4B;line-height:1.35;margin-top:2px'
+      : 'font-size:15px;font-weight:700;color:#4C4680;margin-top:4px'
+    head.appendChild(p)
+  })
+  const title = document.createElement('div')
+  title.setAttribute('data-capture-text', '')
+  title.textContent = opts.className ? `${opts.className} · ${opts.studentName}` : opts.studentName
+  title.style.cssText = 'font-size:20px;font-weight:800;color:#6C63FF;margin-top:8px'
+  head.appendChild(title)
+  doc.appendChild(head)
+}
+
+function ReportAreaCard({
+  title,
+  who,
+  section,
+}: {
+  title: string
+  who: string
+  section: ExamScoreSection
+}) {
+  return (
+    <div className="sec">
+      <div className="sec-title"><span>{section.name}</span></div>
+      <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
+        <ExamCompareBars
+          size="large"
+          exams={[{
+            key: String(section.sectionId),
+            label: section.name,
+            sub: section.score == null
+              ? `만점 ${fmtScore(section.maxScore)}점`
+              : `${fmtScore(section.score)}/${fmtScore(section.maxScore)} - ${fmtScore(scorePercent(section.score, section.maxScore))}점`,
+            myScore: section.score,
+            examAvg: section.examAvg ?? null,
+            classAvg: section.classAvg ?? null,
+            maxScore: section.maxScore,
+          }]}
+        />
+      </div>
+    </div>
+  )
+}
+
+type PaintBlock =
+  | { kind: 'node'; node: HTMLElement | null }
+  | { kind: 'element'; element: ReactNode }
+
+async function paintReport(opts: {
+  filename: string
+  width: number
+  className: string
+  studentName: string
+  lines: string[]
+  blocks: PaintBlock[]
+  academyName?: string
+  academyLogo?: string
+}) {
+  await downloadComposedPng(opts.filename, opts.width, async (doc, cleanup) => {
+    appendReportHeader(doc, opts)
+    opts.blocks.forEach((block) => {
+      if (block.kind === 'node') {
+        if (!block.node) return
+        const clone = block.node.cloneNode(true) as HTMLElement
+        clone.querySelectorAll('[data-skip-capture], [data-report-hide]').forEach((node) => node.remove())
+        clone.style.outline = 'none'
+        clone.style.outlineOffset = '0'
+        doc.appendChild(clone)
+        return
+      }
+      const mount = document.createElement('div')
+      doc.appendChild(mount)
+      const root = createRoot(mount)
+      cleanup(() => root.unmount())
+      flushSync(() => {
+        root.render(<>{block.element}</>)
+      })
+    })
+  })
+}
+
+function StudentPartView({
+  part,
+  history,
+  examId,
+  examTitle,
+}: {
+  part: string
+  history: GradeHistory
+  examId: number
+  examTitle: string
+}) {
+  const chrono = [...history.items].slice().reverse()
+  const shown = history.items.find((it) => it.examId === examId) ?? null
+  const who = [shown?.classroomName || history.classroomName, history.studentName].filter(Boolean).join(' · ') || history.studentName
+  const title = shown?.title || examTitle
+  if (part === 'stu:summary') {
+    const dlt = deltaLabel(shown?.delta)
+    return (
+      <div className="sec">
+        <div className="sec-title">점수 요약</div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: COLOR_EXAM_AVG }}>{shown?.examAvg == null ? '—' : `${fmtScore(shown.examAvg)}점`}</div>
+            <div style={{ fontSize: 11, color: 'var(--slate2)' }}>LEVEL 평균</div>
+          </div>
+          <div style={{ flex: 1, textAlign: 'center', background: 'var(--acc2)', borderRadius: 12, padding: 14 }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--acc)' }}>{shown?.classAvg == null ? '—' : `${fmtScore(shown.classAvg)}점`}</div>
+            <div style={{ fontSize: 11, color: 'var(--slate2)' }}>CLASS 평균</div>
+          </div>
+          <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
+            <div style={{ fontSize: 22, fontWeight: 800, color: COLOR_MY_SCORE }}>{shown?.score == null ? '—' : `${fmtScore(shown.score)}점`}</div>
+            <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내 점수</div>
+            {dlt && <div style={{ fontSize: 11, fontWeight: 700, color: dlt.color, marginTop: 4 }}>{dlt.text}</div>}
+          </div>
+        </div>
+      </div>
+    )
+  }
+  if (part === 'stu:trend') {
+    return (
+      <div className="sec">
+        <div className="sec-title">회차별 추이</div>
+        <div className="card" style={{ padding: 14 }}>
+          <TrendLine points={chrono.map((it) => ({
+            key: String(it.examId),
+            label: (it.date || '').slice(5),
+            value: it.score,
+            max: it.maxScore,
+          }))} />
+        </div>
+      </div>
+    )
+  }
+  if (part === 'stu:compare') {
+    return (
+      <div className="sec">
+        <div className="sec-title">점수 비교</div>
+        <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
+          <div style={{ marginBottom: 16 }}>
+            <RankHighlight rank={shown?.rank} classRank={shown?.classRank} />
+          </div>
+          <ThreeScoreBars
+            examAvg={shown?.examAvg ?? null}
+            classAvg={shown?.classAvg ?? null}
+            myScore={shown?.score ?? null}
+            maxScore={shown?.maxScore ?? 100}
+          />
+        </div>
+      </div>
+    )
+  }
+  if (part === 'stu:subject') {
+    const sections = shown?.sectionScores ?? []
+    if (sections.length === 0) return null
+    return (
+      <div className="sec">
+        <div className="sec-title">세부영역 비교</div>
+        <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
+          <ExamCompareBars
+            size="large"
+            exams={sections.map((sec) => ({
+              key: String(sec.sectionId),
+              label: sec.name,
+              sub: sec.score == null
+                ? `만점 ${fmtScore(sec.maxScore)}점`
+                : `${fmtScore(sec.score)}/${fmtScore(sec.maxScore)} - ${fmtScore(scorePercent(sec.score, sec.maxScore))}점`,
+              myScore: sec.score,
+              examAvg: sec.examAvg ?? null,
+              classAvg: sec.classAvg ?? null,
+              maxScore: sec.maxScore,
+            }))}
+          />
+        </div>
+      </div>
+    )
+  }
+  if (part === 'stu:exams') {
+    return (
+      <div className="sec">
+        <div className="sec-title">시험별 비교</div>
+        <div className="card" style={{ padding: 14 }}>
+          <ExamCompareBars
+            exams={chrono.map((it) => ({
+              key: String(it.examId),
+              label: (it.date || '').slice(5),
+              sub: it.title.length > 6 ? `${it.title.slice(0, 6)}…` : it.title,
+              myScore: it.score,
+              examAvg: it.examAvg ?? null,
+              classAvg: it.classAvg ?? null,
+              maxScore: it.maxScore,
+            }))}
+          />
+        </div>
+      </div>
+    )
+  }
+  if (part === 'stu:list') {
+    return (
+      <div className="sec">
+        <div className="sec-title">시험별 성적</div>
+        {history.items.length === 0 && (
+          <div style={{ textAlign: 'center', padding: 16, color: 'var(--slate3)', fontSize: 13 }}>아직 성적이 없습니다.</div>
+        )}
+        {history.items.map((it) => {
+          const dd = deltaLabel(it.delta)
+          return (
+            <div key={it.examId} className="card" style={{ padding: '13px 16px', marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--navy)' }}>{it.title}</div>
+                  <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 3 }}>{it.date}{it.subject ? ` · ${it.subject}` : ''}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--navy)' }}>
+                    {fmtScore(it.score)}<span style={{ fontSize: 11, color: 'var(--slate3)', fontWeight: 600 }}>/{it.maxScore}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--slate2)' }}>
+                    {it.rank != null ? `${it.rank}등` : '미응시'}
+                    {it.examAvg != null ? ` · 전체평균 ${fmtScore(it.examAvg)}` : ''}
+                    {it.classAvg != null ? ` · 반평균 ${fmtScore(it.classAvg)}` : ''}
+                  </div>
+                  {dd && <div style={{ fontSize: 11, fontWeight: 700, color: dd.color }}>{dd.text}</div>}
+                </div>
+              </div>
+              <SectionChips sections={it.sectionScores} />
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+  if (part.startsWith('area:')) {
+    const sectionId = Number(part.slice(5))
+    const section = shown?.sectionScores?.find((sec) => sec.sectionId === sectionId)
+    if (!section) return null
+    return <ReportAreaCard title={title} who={who} section={section} />
+  }
+  return null
+}
+
+async function composeStudentReport(opts: {
+  filename: string
+  width: number
+  className: string
+  studentName: string
+  lines: string[]
+  blocks: ReportCatalogItem[]
+  who: string
+  examTitle: string
+  academyName?: string
+  academyLogo?: string
+}) {
+  await paintReport({
+    filename: opts.filename,
+    width: opts.width,
+    className: opts.className,
+    studentName: opts.studentName,
+    lines: opts.lines,
+    academyName: opts.academyName,
+    academyLogo: opts.academyLogo,
+    blocks: opts.blocks.map((block) => {
+      if (block.group === 'image') return { kind: 'node' as const, node: block.node }
+      if (!block.section) return { kind: 'node' as const, node: null }
+      return {
+        kind: 'element' as const,
+        element: <ReportAreaCard title={opts.examTitle} who={opts.who} section={block.section} />,
+      }
+    }),
+  })
+}
+
+function ReportPickRow({
+  item,
+  pick,
+  onChange,
+}: {
+  item: ReportCatalogItem
+  pick: ReportPick
+  onChange: (patch: Partial<ReportPick>) => void
+}) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+      <input
+        type="checkbox"
+        checked={pick.on}
+        aria-label={`${item.label} 포함`}
+        onChange={(e) => onChange({ on: e.target.checked })}
+        style={{ width: 16, height: 16, flexShrink: 0 }}
+      />
+      <input
+        className="input-field"
+        inputMode="numeric"
+        aria-label={`${item.label} 순서`}
+        value={pick.order}
+        onChange={(e) => onChange({ order: e.target.value.replace(/[^\d]/g, '').slice(0, 3) })}
+        style={{ width: 52, marginTop: 0, padding: '6px 4px', textAlign: 'center', flexShrink: 0 }}
+      />
+      <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>{item.label}</span>
+      {item.hint && <span style={{ fontSize: 12, color: 'var(--slate2)', flexShrink: 0 }}>{item.hint}</span>}
+    </div>
+  )
+}
+
 export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
   const [searchParams, setSearchParams] = useSearchParams()
   const classes = useDataStore((s) => s.classes)
@@ -686,6 +1191,19 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
   const [statsExamId, setStatsExamId] = useState<number | null>(null)
   const [studentId, setStudentId] = useState<number | null>(null)
   const [focusExamId, setFocusExamId] = useState<number | null>(null)
+  const [reportOn, setReportOn] = useState(false)
+  const [reportBusy, setReportBusy] = useState(false)
+  const [reportPick, setReportPick] = useState<Record<string, ReportPick>>({})
+  const [statsReportOn, setStatsReportOn] = useState(false)
+  const [statsReportPick, setStatsReportPick] = useState<Record<string, ReportPick>>({})
+  const [reportLayouts, setReportLayouts] = useState<ReportLayout[]>(() => readReportLayouts())
+  const [layoutName, setLayoutName] = useState('')
+  const [layoutId, setLayoutId] = useState('')
+  const loadedLayoutRef = useRef<ReportLayoutItem[] | null>(null)
+  const [statsReportStudents, setStatsReportStudents] = useState<number[]>([])
+  const [statsReportBusy, setStatsReportBusy] = useState(false)
+  const [statsReportProgress, setStatsReportProgress] = useState('')
+  const [reportSections, setReportSections] = useState<ExamSection[]>([])
   const [title, setTitle] = useState('')
   const [date, setDate] = useState(ymd(new Date()))
   const [subject, setSubject] = useState('')
@@ -723,10 +1241,13 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
   const [dailyClassId, setDailyClassId] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const statsCaptureRef = useRef<HTMLDivElement>(null)
+  const statsSummaryRef = useRef<HTMLDivElement>(null)
+  const studentSummaryRef = useRef<HTMLDivElement>(null)
   const studentTrendRef = useRef<HTMLDivElement>(null)
   const studentCompareRef = useRef<HTMLDivElement>(null)
   const studentExamBarsRef = useRef<HTMLDivElement>(null)
   const studentSubjectRef = useRef<HTMLDivElement>(null)
+  const studentListRef = useRef<HTMLDivElement>(null)
   const classAvgRef = useRef<HTMLDivElement>(null)
   const distRef = useRef<HTMLDivElement>(null)
   const rankingRef = useRef<HTMLDivElement>(null)
@@ -781,6 +1302,60 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       setView('student')
     }
   }, [classes.length])
+
+  useEffect(() => {
+    setReportOn(false)
+    setReportPick({})
+  }, [studentId])
+
+  useEffect(() => {
+    loadedLayoutRef.current = null
+    setStatsReportOn(false)
+    setStatsReportPick({})
+    setStatsReportStudents([])
+    setReportSections([])
+  }, [statsExamId])
+
+  useEffect(() => {
+    if (!statsReportOn || statsExamId == null || mode !== 'regular') return
+    let alive = true
+    void fetchRegularExam(statsExamId).then((ex) => {
+      if (alive) setReportSections(ex.sections ?? [])
+    }).catch(() => {
+      if (alive) setReportSections([])
+    })
+    return () => { alive = false }
+  }, [statsReportOn, statsExamId, mode])
+
+  useEffect(() => {
+    if (!statsReportOn || !stats) return
+    const items = statsReportCatalog(
+      stats.title,
+      reportSections,
+      (stats.classrooms?.length ?? 0) > 0,
+      (stats.distribution?.length ?? 0) > 0,
+      (stats.ranking?.length ?? 0) > 0,
+    )
+    setStatsReportPick((prev) => {
+      const base = withDefaultPicks(prev, items)
+      const saved = loadedLayoutRef.current
+      if (!saved) return base
+      const applied = applySavedLayout(items, saved)
+      const next = { ...base }
+      let changed = base !== prev
+      items.forEach((item) => {
+        if (!prev[item.key]) {
+          next[item.key] = applied[item.key]
+          changed = true
+        }
+      })
+      return changed ? next : base
+    })
+  }, [statsReportOn, stats, reportSections])
+
+  useEffect(() => {
+    if (view !== 'student') setReportOn(false)
+  }, [view])
 
   useEffect(() => {
     if (mode !== 'daily' || dailyClassId != null || classes.length === 0) return
@@ -1093,6 +1668,93 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
         </div>
       </>
     )
+  }
+
+  const createStatsReports = async () => {
+    if (!stats) {
+      showToast('시험을 선택한 뒤 성적표를 만드세요.')
+      return
+    }
+    const catalog = statsReportCatalog(
+      stats.title,
+      reportSections,
+      (stats.classrooms?.length ?? 0) > 0,
+      (stats.distribution?.length ?? 0) > 0,
+      (stats.ranking?.length ?? 0) > 0,
+    )
+    const chosen = checkedInOrder(
+      catalog.map((item) => ({ ...item, node: null })),
+      statsReportPick,
+    )
+    const targets = (stats.ranking ?? []).filter((row) => statsReportStudents.includes(row.studentId))
+    if (chosen.length === 0) {
+      showToast('성적표에 넣을 항목을 선택하세요.')
+      return
+    }
+    if (targets.length === 0) {
+      showToast('성적표를 만들 학생을 선택하세요.')
+      return
+    }
+    const width = Math.ceil(
+      statsSummaryRef.current?.getBoundingClientRect().width
+      || classAvgRef.current?.getBoundingClientRect().width
+      || 720,
+    )
+    const statNode = (key: string) => {
+      if (key === 'stat:summary') return statsSummaryRef.current
+      if (key === 'stat:class') return classAvgRef.current
+      if (key === 'stat:dist') return distRef.current
+      if (key === 'stat:rank') return rankingRef.current
+      return null
+    }
+    setStatsReportBusy(true)
+    let saved = 0
+    let failed = 0
+    try {
+      for (let i = 0; i < targets.length; i += 1) {
+        const row = targets[i]
+        setStatsReportProgress(`${i + 1}/${targets.length} ${row.studentName}`)
+        try {
+          const history = await fetchStudentGrades(row.studentId)
+          const className = (row.classroomName || history.classroomName || '').trim()
+          const filename = className ? `${className}-${row.studentName}` : row.studentName
+          await paintReport({
+            filename,
+            width,
+            className,
+            studentName: row.studentName,
+            academyName: user?.academyName,
+            academyLogo: user?.academyLogo,
+            lines: [stats.title].filter((line) => !!line && line.trim().length > 0),
+            blocks: chosen.map((item) => (
+              item.key.startsWith('stat:')
+                ? { kind: 'node' as const, node: statNode(item.key) }
+                : {
+                  kind: 'element' as const,
+                  element: (
+                    <StudentPartView
+                      part={item.key}
+                      history={history}
+                      examId={stats.examId}
+                      examTitle={stats.title}
+                    />
+                  ),
+                }
+            )),
+          })
+          saved += 1
+        } catch {
+          failed += 1
+        }
+        if (i < targets.length - 1) await new Promise((resolve) => setTimeout(resolve, 400))
+      }
+      showToast(failed > 0
+        ? `${saved}명 저장, ${failed}명 실패`
+        : `${saved}명 성적표를 저장했습니다. 파일 이름은 반-학생이름.png 입니다.`)
+    } finally {
+      setStatsReportBusy(false)
+      setStatsReportProgress('')
+    }
   }
 
   if (view === 'write') {
@@ -1519,32 +2181,253 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
       ?? (stats?.examId === focusExamId ? stats.title : '')
     const shownMax = shown?.maxScore ?? 100
     const dlt = deltaLabel(shown?.delta)
+    const className = (shown?.classroomName || history.classroomName || '').trim()
+    const reportFile = className ? `${className}-${history.studentName}` : history.studentName
+    const reportWho = [className, history.studentName].filter(Boolean).join(' · ') || history.studentName
+    const areas = shown?.sectionScores ?? []
+    const reportItems: ReportCatalogItem[] = [
+      { key: 'img:summary', group: 'image', label: '점수 요약', node: studentSummaryRef.current },
+      { key: 'img:trend', group: 'image', label: '회차별 추이', node: studentTrendRef.current },
+      { key: 'img:compare', group: 'image', label: '점수 비교', node: studentCompareRef.current },
+      ...(areas.length > 0 ? [{
+        key: 'img:subject',
+        group: 'image' as const,
+        label: '세부영역 비교',
+        hint: '영역 전체',
+        node: studentSubjectRef.current,
+      }] : []),
+      { key: 'img:exams', group: 'image', label: '시험별 비교', node: studentExamBarsRef.current },
+      { key: 'img:list', group: 'image', label: '시험별 성적', node: studentListRef.current },
+      ...areas.map((sec) => ({
+        key: `area:${sec.sectionId}`,
+        group: 'area' as const,
+        label: sec.name,
+        hint: sec.score == null ? '미응시' : `${fmtScore(sec.score)}/${fmtScore(sec.maxScore)}`,
+        node: null,
+        section: sec,
+      })),
+    ]
+    const imageItems = reportItems.filter((item) => item.group === 'image')
+    const areaItems = reportItems.filter((item) => item.group === 'area')
+    const studentLayouts = reportLayouts.filter((row) => row.kind === 'student')
+    const saveStudentLayout = () => {
+      const name = layoutName.trim()
+      if (!name) {
+        showToast('구성 이름을 입력하세요.')
+        return
+      }
+      const items: ReportLayoutItem[] = reportItems.map((item) => ({
+        key: item.key,
+        label: item.label,
+        on: reportPick[item.key]?.on ?? false,
+        order: reportPick[item.key]?.order ?? '',
+      }))
+      const existing = reportLayouts.find((row) => row.name === name && row.kind === 'student')
+      const id = existing?.id ?? String(Date.now())
+      const next = existing
+        ? reportLayouts.map((row) => (row.id === id ? { ...row, name, kind: 'student' as const, items } : row))
+        : [...reportLayouts, { id, name, kind: 'student' as const, items }]
+      writeReportLayouts(next)
+      setReportLayouts(next)
+      setLayoutId(id)
+      showToast('성적표 구성을 저장했습니다. 다른 학생 성적표에서도 불러올 수 있습니다.')
+    }
+    const loadStudentLayout = () => {
+      const found = studentLayouts.find((row) => row.id === layoutId)
+      if (!found) {
+        showToast('불러올 구성을 선택하세요.')
+        return
+      }
+      setReportPick(applySavedLayout(reportItems, found.items))
+      setLayoutName(found.name)
+      showToast(`${found.name} 구성을 불러왔습니다.`)
+    }
+    const deleteStudentLayout = () => {
+      const found = studentLayouts.find((row) => row.id === layoutId)
+      if (!found) {
+        showToast('삭제할 구성을 선택하세요.')
+        return
+      }
+      const next = reportLayouts.filter((row) => row.id !== layoutId)
+      writeReportLayouts(next)
+      setReportLayouts(next)
+      setLayoutId('')
+      if (layoutName.trim() === found.name) setLayoutName('')
+      showToast(`${found.name} 구성을 삭제했습니다.`)
+    }
+    const patchPick = (key: string, patch: Partial<ReportPick>) => {
+      setReportPick((prev) => {
+        const base = prev[key] ?? { on: false, order: '' }
+        return { ...prev, [key]: { ...base, ...patch } }
+      })
+    }
+    const reportNode = (key: string) => {
+      if (key === 'img:summary') return studentSummaryRef.current
+      if (key === 'img:trend') return studentTrendRef.current
+      if (key === 'img:compare') return studentCompareRef.current
+      if (key === 'img:subject') return studentSubjectRef.current
+      if (key === 'img:exams') return studentExamBarsRef.current
+      if (key === 'img:list') return studentListRef.current
+      return null
+    }
+    const createReport = async () => {
+      const chosen = checkedInOrder(reportItems, reportPick).map((item) => (
+        item.group === 'image' ? { ...item, node: reportNode(item.key) } : item
+      ))
+      if (chosen.length === 0) {
+        showToast('성적표에 넣을 항목을 선택하세요.')
+        return
+      }
+      if (chosen.every((item) => item.group === 'image' && !item.node)) {
+        showToast('선택한 성적 이미지를 찾지 못했습니다.')
+        return
+      }
+      setReportBusy(true)
+      try {
+        const width = Math.ceil(
+          studentCompareRef.current?.getBoundingClientRect().width
+          || studentSummaryRef.current?.getBoundingClientRect().width
+          || 720,
+        )
+        await composeStudentReport({
+          filename: reportFile,
+          width,
+          className,
+          studentName: history.studentName,
+          academyName: user?.academyName,
+          academyLogo: user?.academyLogo,
+          lines: [shownTitle, shown?.subject].filter((line): line is string => !!line && line.trim().length > 0),
+          blocks: chosen,
+          who: reportWho,
+          examTitle: shownTitle,
+        })
+        showToast(`${reportFile}.png 성적표를 저장했습니다. 인쇄해서 전달할 수 있습니다.`)
+      } catch {
+        showToast('성적표 생성에 실패했습니다.')
+      } finally {
+        setReportBusy(false)
+      }
+    }
     return (
       <>
-        <TopBar title={`${history.studentName} 성적`} sub={history.classroomName} onBack={() => setView('list')} />
+        <TopBar
+          title={`${history.studentName} 성적`}
+          sub={history.classroomName}
+          onBack={() => setView('list')}
+          right={(
+            <button
+              type="button"
+              className={reportOn ? 'btn-primary' : 'btn-secondary'}
+              onClick={() => {
+                if (!reportOn) setReportPick((prev) => withDefaultPicks(prev, reportItems))
+                setReportOn((on) => !on)
+              }}
+              style={{ width: 'auto', marginTop: 0, padding: '6px 12px', fontSize: 12, fontWeight: 700, whiteSpace: 'nowrap' }}
+            >
+              {reportOn ? '성적표 닫기' : '성적표 만들기'}
+            </button>
+          )}
+        />
         <Breadcrumb items={[
           { label: pageTitle, onClick: () => setView('list') },
           { label: history.studentName },
         ]} />
         <div className="page-content-body">
-          <div className="sec">
+          {reportOn && (
+            <div className="sec" data-skip-capture="">
+              <div className="sec-title">성적표 구성</div>
+              <div className="card" style={{ padding: '14px 16px' }}>
+                <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6, marginBottom: 10 }}>
+                  넣을 항목을 체크하고 순서를 입력하세요. 생성하면 그 순서대로 한 장의 이미지가 됩니다.
+                  파일 이름은 {reportFile}.png 이고, 인쇄해서 학부모 성적표로 전달할 수 있습니다.
+                  구성은 저장해 두면 다른 학생 성적표에서도 불러올 수 있습니다. 세부 영역은 이름이 같은 항목에 적용됩니다.
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                  <input
+                    className="input-field"
+                    value={layoutName}
+                    placeholder="구성 이름"
+                    onChange={(e) => setLayoutName(e.target.value)}
+                    style={{ flex: 1, marginTop: 0 }}
+                  />
+                  <button type="button" className="btn-secondary" onClick={saveStudentLayout} style={{ width: 'auto', marginTop: 0, whiteSpace: 'nowrap' }}>
+                    구성 저장
+                  </button>
+                </div>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14 }}>
+                  <select
+                    className="input-field"
+                    value={studentLayouts.some((row) => row.id === layoutId) ? layoutId : ''}
+                    onChange={(e) => setLayoutId(e.target.value)}
+                    style={{ flex: 1, marginTop: 0 }}
+                  >
+                    <option value="">저장된 구성</option>
+                    {studentLayouts.map((row) => (
+                      <option key={row.id} value={row.id}>{row.name}</option>
+                    ))}
+                  </select>
+                  <button type="button" className="btn-secondary" onClick={loadStudentLayout} style={{ width: 'auto', marginTop: 0, whiteSpace: 'nowrap' }}>
+                    불러오기
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={deleteStudentLayout} style={{ width: 'auto', marginTop: 0, whiteSpace: 'nowrap' }}>
+                    삭제
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--navy)' }}>성적 이미지</div>
+                {imageItems.map((item) => (
+                  <ReportPickRow
+                    key={item.key}
+                    item={item}
+                    pick={reportPick[item.key] ?? { on: false, order: '' }}
+                    onChange={(patch) => patchPick(item.key, patch)}
+                  />
+                ))}
+                <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--navy)', marginTop: 14 }}>성적 영역</div>
+                <div style={{ fontSize: 11, color: 'var(--slate3)', marginTop: 4 }}>
+                  {shownTitle ? `${shownTitle}의 영역을 각각 한 칸으로 넣습니다.` : '선택한 시험의 영역을 각각 한 칸으로 넣습니다.'}
+                </div>
+                {areaItems.length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--slate3)', padding: '8px 0' }}>이 시험에 나뉜 성적 영역이 없습니다.</div>
+                )}
+                {areaItems.map((item) => (
+                  <ReportPickRow
+                    key={item.key}
+                    item={item}
+                    pick={reportPick[item.key] ?? { on: false, order: '' }}
+                    onChange={(patch) => patchPick(item.key, patch)}
+                  />
+                ))}
+                <button
+                  type="button"
+                  className="btn-primary"
+                  disabled={reportBusy}
+                  onClick={() => { void createReport() }}
+                  style={{ opacity: reportBusy ? 0.7 : 1 }}
+                >
+                  {reportBusy ? '성적표 만드는 중...' : '성적표 생성하기'}
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="sec" ref={studentSummaryRef} style={reportFrame(reportOn && !!reportPick['img:summary']?.on)}>
+            <div className="sec-title">점수 요약</div>
             <div style={{ display: 'flex', gap: 10 }}>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: '#64748B' }}>{shown?.examAvg == null ? '—' : `${fmtScore(shown.examAvg)}점`}</div>
-                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>전체평균</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: COLOR_EXAM_AVG }}>{shown?.examAvg == null ? '—' : `${fmtScore(shown.examAvg)}점`}</div>
+                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>LEVEL 평균</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--acc2)', borderRadius: 12, padding: 14 }}>
                 <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--acc)' }}>{shown?.classAvg == null ? '—' : `${fmtScore(shown.classAvg)}점`}</div>
-                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내가 속한 반평균</div>
+                <div style={{ fontSize: 11, color: 'var(--slate2)' }}>CLASS 평균</div>
               </div>
               <div style={{ flex: 1, textAlign: 'center', background: 'var(--bg2)', borderRadius: 12, padding: 14 }}>
-                <div style={{ fontSize: 22, fontWeight: 800, color: 'var(--ok)' }}>{shown?.score == null ? '—' : `${fmtScore(shown.score)}점`}</div>
+                <div style={{ fontSize: 22, fontWeight: 800, color: COLOR_MY_SCORE }}>{shown?.score == null ? '—' : `${fmtScore(shown.score)}점`}</div>
                 <div style={{ fontSize: 11, color: 'var(--slate2)' }}>내 점수</div>
                 {dlt && <div style={{ fontSize: 11, fontWeight: 700, color: dlt.color, marginTop: 4 }}>{dlt.text}</div>}
               </div>
             </div>
           </div>
-          <div className="sec" ref={studentTrendRef}>
+          <div className="sec" ref={studentTrendRef} style={reportFrame(reportOn && !!reportPick['img:trend']?.on)}>
             <SecHead
               title="회차별 추이"
               getTarget={() => studentTrendRef.current}
@@ -1560,7 +2443,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
               }))} />
             </div>
           </div>
-          <div className="sec" ref={studentCompareRef}>
+          <div className="sec" ref={studentCompareRef} style={reportFrame(reportOn && !!reportPick['img:compare']?.on)}>
             <SecHead
               title="점수 비교"
               getTarget={() => studentCompareRef.current}
@@ -1570,19 +2453,13 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
             <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
               <div style={{ marginBottom: 14, paddingBottom: 12, borderBottom: '1px solid var(--border)' }}>
                 {shownTitle && (
-                  <div data-capture-text="" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)' }}>{shownTitle}</div>
+                  <div data-report-hide="" data-capture-text="" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)' }}>{shownTitle}</div>
                 )}
-                <div data-capture-text="" style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)', marginTop: shownTitle ? 6 : 0 }}>
+                <div data-report-hide="" data-capture-text="" style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)', marginTop: shownTitle ? 6 : 0 }}>
                   {[shown?.classroomName || history.classroomName, history.studentName].filter(Boolean).join(' · ') || history.studentName}
                 </div>
-                <div data-capture-text="" style={{ fontSize: 13, fontWeight: 700, lineHeight: 1.6, color: 'var(--slate)', marginTop: 6 }}>
-                  {shown?.rank != null && shown?.rankedCount != null
-                    ? `전체 ${shown.rankedCount}명 중 ${shown.rank}등`
-                    : '전체 등수 —'}
-                  {' · '}
-                  {shown?.classRank != null && shown?.classRankedCount != null
-                    ? `해당 반 ${shown.classRankedCount}명 중 ${shown.classRank}등`
-                    : '해당 반 등수 —'}
+                <div style={{ marginTop: 10 }}>
+                  <RankHighlight rank={shown?.rank} classRank={shown?.classRank} />
                 </div>
               </div>
               <ThreeScoreBars
@@ -1594,15 +2471,15 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
             </div>
           </div>
           {(shown?.sectionScores?.length ?? 0) > 0 && (
-            <div className="sec" ref={studentSubjectRef}>
+            <div className="sec" ref={studentSubjectRef} style={reportFrame(reportOn && !!reportPick['img:subject']?.on)}>
               <SecHead
-                title="과목별 점수 비교"
+                title="세부영역 비교"
                 getTarget={() => studentSubjectRef.current}
-                filename={`${history.studentName}_과목별점수비교`}
+                filename={`${history.studentName}_세부영역비교`}
                 onError={showToast}
               />
                 <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
-                <div style={{ marginBottom: 10 }}>
+                <div data-report-hide="" style={{ marginBottom: 10 }}>
                   {shownTitle && (
                     <div data-capture-text="" style={{ fontSize: 16, fontWeight: 700, lineHeight: 1.6, color: 'var(--navy)' }}>{shownTitle}</div>
                   )}
@@ -1631,7 +2508,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
               </div>
             </div>
           )}
-          <div className="sec" ref={studentExamBarsRef}>
+          <div className="sec" ref={studentExamBarsRef} style={reportFrame(reportOn && !!reportPick['img:exams']?.on)}>
             <SecHead
               title="시험별 비교"
               getTarget={() => studentExamBarsRef.current}
@@ -1652,7 +2529,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
               />
             </div>
           </div>
-          <div className="sec">
+          <div className="sec" ref={studentListRef} style={reportFrame(reportOn && !!reportPick['img:list']?.on)}>
             <div className="sec-title">시험별 성적</div>
             {history.items.length === 0 && (
               <div style={{ textAlign: 'center', padding: 32, color: 'var(--slate3)', fontSize: 13 }}>아직 성적이 없습니다.</div>
@@ -1660,8 +2537,8 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
             {history.items.map((it) => {
               const dd = deltaLabel(it.delta)
               return (
-                <div key={it.examId} className="card" style={{ padding: '13px 16px', marginBottom: 8, cursor: 'pointer' }}
-                  onClick={() => { void openExam(it.examId) }}>
+                <div key={it.examId} className="card" style={{ padding: '13px 16px', marginBottom: 8, cursor: reportOn ? 'default' : 'pointer' }}
+                  onClick={() => { if (!reportOn) void openExam(it.examId) }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
@@ -1770,6 +2647,198 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
         {mode === 'regular' && mainTab === 'stats' && (
           <>
             <div className="sec">
+              <button
+                type="button"
+                className={statsReportOn ? 'btn-secondary' : 'btn-primary'}
+                disabled={!stats || statsReportBusy}
+                onClick={() => {
+                  if (!stats) return
+                  if (statsReportOn) {
+                    setStatsReportOn(false)
+                    return
+                  }
+                  const ids = (stats.ranking ?? []).map((row) => row.studentId)
+                  const items = statsReportCatalog(
+                    stats.title,
+                    reportSections,
+                    (stats.classrooms?.length ?? 0) > 0,
+                    (stats.distribution?.length ?? 0) > 0,
+                    (stats.ranking?.length ?? 0) > 0,
+                  )
+                  setStatsReportPick((prev) => withDefaultPicks(prev, items))
+                  setStatsReportStudents((prev) => (prev.length > 0 ? prev : ids))
+                  setStatsReportOn(true)
+                }}
+                style={{ marginTop: 0, opacity: !stats || statsReportBusy ? 0.6 : 1 }}
+              >
+                {statsReportBusy
+                  ? `성적표 만드는 중 ${statsReportProgress}`
+                  : statsReportOn ? '성적표 닫기' : '성적표 만들기'}
+              </button>
+              {!stats && (
+                <div style={{ fontSize: 12, color: 'var(--slate3)', marginTop: 8 }}>아래에서 시험을 선택하면 성적표를 만들 수 있습니다.</div>
+              )}
+              {statsReportOn && stats && (
+                <div className="card" style={{ padding: '14px 16px', marginTop: 12 }}>
+                  <div style={{ fontSize: 12, color: 'var(--slate2)', lineHeight: 1.6, marginBottom: 10 }}>
+                    시험 통계와 학생 상세를 체크하고 순서를 입력하세요. 학생을 고르거나 전체를 선택하면, 학생마다 반-학생이름.png 한 장으로 저장됩니다.
+                    구성은 저장해 두면 다른 시험 성적표에서도 불러올 수 있습니다. 세부 영역은 이름이 같은 항목에 적용됩니다.
+                  </div>
+                  {(() => {
+                    const catalog = statsReportCatalog(
+                      stats.title,
+                      reportSections,
+                      (stats.classrooms?.length ?? 0) > 0,
+                      (stats.distribution?.length ?? 0) > 0,
+                      (stats.ranking?.length ?? 0) > 0,
+                    )
+                    const saveLayout = () => {
+                      const name = layoutName.trim()
+                      if (!name) {
+                        showToast('구성 이름을 입력하세요.')
+                        return
+                      }
+                      const items: ReportLayoutItem[] = catalog.map((item) => ({
+                        key: item.key,
+                        label: item.label,
+                        on: statsReportPick[item.key]?.on ?? false,
+                        order: statsReportPick[item.key]?.order ?? '',
+                      }))
+                      const existing = reportLayouts.find((row) => row.name === name && (row.kind ?? 'stats') === 'stats')
+                      const id = existing?.id ?? String(Date.now())
+                      const next = existing
+                        ? reportLayouts.map((row) => (row.id === id ? { ...row, name, kind: 'stats' as const, items } : row))
+                        : [...reportLayouts, { id, name, kind: 'stats' as const, items }]
+                      writeReportLayouts(next)
+                      setReportLayouts(next)
+                      setLayoutId(id)
+                      loadedLayoutRef.current = items
+                      showToast('성적표 구성을 저장했습니다. 다른 시험에서도 불러올 수 있습니다.')
+                    }
+                    const loadLayout = () => {
+                      const found = reportLayouts.find((row) => row.id === layoutId)
+                      if (!found) {
+                        showToast('불러올 구성을 선택하세요.')
+                        return
+                      }
+                      loadedLayoutRef.current = found.items
+                      setStatsReportPick(applySavedLayout(catalog, found.items))
+                      setLayoutName(found.name)
+                      showToast(`${found.name} 구성을 불러왔습니다.`)
+                    }
+                    const deleteLayout = () => {
+                      const found = reportLayouts.find((row) => row.id === layoutId)
+                      if (!found) {
+                        showToast('삭제할 구성을 선택하세요.')
+                        return
+                      }
+                      const next = reportLayouts.filter((row) => row.id !== layoutId)
+                      writeReportLayouts(next)
+                      setReportLayouts(next)
+                      setLayoutId('')
+                      if (layoutName.trim() === found.name) setLayoutName('')
+                      showToast(`${found.name} 구성을 삭제했습니다.`)
+                    }
+                    const renderRows = (rows: typeof catalog) => rows.map((item) => (
+                      <ReportPickRow
+                        key={item.key}
+                        item={{ ...item, node: null }}
+                        pick={statsReportPick[item.key] ?? { on: false, order: '' }}
+                        onChange={(patch) => {
+                          setStatsReportPick((prev) => {
+                            const base = prev[item.key] ?? { on: false, order: '' }
+                            return { ...prev, [item.key]: { ...base, ...patch } }
+                          })
+                        }}
+                      />
+                    ))
+                    return (
+                      <>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+                          <input
+                            className="input-field"
+                            value={layoutName}
+                            placeholder="구성 이름"
+                            onChange={(e) => setLayoutName(e.target.value)}
+                            style={{ flex: 1, marginTop: 0 }}
+                          />
+                          <button type="button" className="btn-secondary" onClick={saveLayout} style={{ width: 'auto', marginTop: 0, whiteSpace: 'nowrap' }}>
+                            구성 저장
+                          </button>
+                        </div>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14 }}>
+                          <select
+                            className="input-field"
+                            value={reportLayouts.some((row) => row.id === layoutId && (row.kind ?? 'stats') === 'stats') ? layoutId : ''}
+                            onChange={(e) => setLayoutId(e.target.value)}
+                            style={{ flex: 1, marginTop: 0 }}
+                          >
+                            <option value="">저장된 구성</option>
+                            {reportLayouts.filter((row) => (row.kind ?? 'stats') === 'stats').map((row) => (
+                              <option key={row.id} value={row.id}>{row.name}</option>
+                            ))}
+                          </select>
+                          <button type="button" className="btn-secondary" onClick={loadLayout} style={{ width: 'auto', marginTop: 0, whiteSpace: 'nowrap' }}>
+                            불러오기
+                          </button>
+                          <button type="button" className="btn-secondary" onClick={deleteLayout} style={{ width: 'auto', marginTop: 0, whiteSpace: 'nowrap' }}>
+                            삭제
+                          </button>
+                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--navy)' }}>시험 자료</div>
+                        {renderRows(catalog.filter((item) => item.key.startsWith('stat:')))}
+                        <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--navy)', marginTop: 14 }}>학생 상세</div>
+                        {renderRows(catalog.filter((item) => !item.key.startsWith('stat:')))}
+                      </>
+                    )
+                  })()}
+                  <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--navy)', marginTop: 14 }}>학생 선택</div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', borderTop: '1px solid var(--border)' }}>
+                    <input
+                      type="checkbox"
+                      checked={(stats.ranking ?? []).length > 0 && (stats.ranking ?? []).every((row) => statsReportStudents.includes(row.studentId))}
+                      onChange={() => {
+                        const ids = (stats.ranking ?? []).map((row) => row.studentId)
+                        const allOn = ids.length > 0 && ids.every((id) => statsReportStudents.includes(id))
+                        setStatsReportStudents(allOn ? [] : ids)
+                      }}
+                      style={{ width: 16, height: 16 }}
+                    />
+                    <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--navy)' }}>전체 학생 ({(stats.ranking ?? []).length}명)</span>
+                  </div>
+                  <div style={{ maxHeight: 240, overflow: 'auto' }}>
+                    {(stats.ranking ?? []).map((row) => (
+                      <label key={row.studentId} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid var(--border)', cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={statsReportStudents.includes(row.studentId)}
+                          onChange={() => {
+                            setStatsReportStudents((prev) => (
+                              prev.includes(row.studentId)
+                                ? prev.filter((id) => id !== row.studentId)
+                                : [...prev, row.studentId]
+                            ))
+                          }}
+                          style={{ width: 16, height: 16 }}
+                        />
+                        <span style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--navy)' }}>{row.studentName}</span>
+                        <span style={{ fontSize: 12, color: 'var(--slate2)' }}>{row.classroomName || '반 없음'}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    disabled={statsReportBusy}
+                    onClick={() => { void createStatsReports() }}
+                    style={{ opacity: statsReportBusy ? 0.7 : 1 }}
+                  >
+                    {statsReportBusy ? `성적표 만드는 중 ${statsReportProgress}` : `성적표 생성하기 (${statsReportStudents.length}명)`}
+                  </button>
+                </div>
+              )}
+            </div>
+            <div className="sec">
               <div className="sec-title">시험 선택</div>
               {examList.length === 0 && (
                 <div style={{ fontSize: 13, color: 'var(--slate3)', padding: '12px 0' }}>등록된 시험이 없습니다.</div>
@@ -1797,7 +2866,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   />
                 </div>
                 <div ref={statsCaptureRef}>
-                <div className="sec">
+                <div className="sec" ref={statsSummaryRef} style={reportFrame(statsReportOn && !!statsReportPick['stat:summary']?.on)}>
                   <div style={{ background: 'var(--acc2)', borderRadius: 12, padding: '14px 16px' }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--acc)', marginBottom: 10 }}>{stats.title} 통계</div>
                     <div style={{ display: 'flex', gap: 12 }}>
@@ -1816,7 +2885,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   </div>
                 </div>
                 {(stats.classrooms?.length ?? 0) > 0 && (
-                  <div className="sec" ref={classAvgRef}>
+                  <div className="sec" ref={classAvgRef} style={reportFrame(statsReportOn && !!statsReportPick['stat:class']?.on)}>
                     <SecHead
                       title="반별 평균 · 최고/최저"
                       getTarget={() => classAvgRef.current}
@@ -1824,13 +2893,35 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                       onError={showToast}
                     />
                     <div className="card" style={{ padding: 14 }}>
-                      <ScoreBars points={stats.classrooms.map((c) => ({
-                        key: String(c.classroomId),
-                        label: c.classroomName,
-                        value: c.average ?? null,
-                        max: stats.maxScore || 100,
-                        sub: `${fmtScore(c.low)}~${fmtScore(c.high)}`,
-                      }))} />
+                      <div style={{ display: 'flex', gap: 12, marginBottom: 8, fontSize: 11, fontWeight: 700 }}>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: COLOR_EXAM_AVG }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: COLOR_EXAM_AVG }} />전체평균
+                        </span>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--acc)' }}>
+                          <span style={{ width: 8, height: 8, borderRadius: 2, background: 'var(--acc)' }} />반평균
+                        </span>
+                      </div>
+                      <ScoreBars points={[
+                        {
+                          key: 'overall',
+                          label: '전체평균',
+                          value: stats.average ?? null,
+                          max: stats.maxScore || 100,
+                          sub: `${fmtScore(stats.low)}~${fmtScore(stats.high)}`,
+                          color: COLOR_EXAM_AVG,
+                        },
+                        ...stats.classrooms.map((c) => ({
+                          key: String(c.classroomId),
+                          label: c.classroomName,
+                          value: c.average ?? null,
+                          max: stats.maxScore || 100,
+                          sub: `${fmtScore(c.low)}~${fmtScore(c.high)}`,
+                        })),
+                      ]} />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '6px 2px', color: COLOR_EXAM_AVG, fontWeight: 700 }}>
+                      <span>전체평균</span>
+                      <span>평균 {fmtScore(stats.average)} · 최고 {fmtScore(stats.high)} · 최저 {fmtScore(stats.low)}</span>
                     </div>
                     {stats.classrooms.map((c) => (
                       <div key={c.classroomId} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, padding: '6px 2px', color: 'var(--slate2)' }}>
@@ -1841,7 +2932,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                   </div>
                 )}
                 {(stats.distribution?.length ?? 0) > 0 && (
-                  <div className="sec" ref={distRef}>
+                  <div className="sec" ref={distRef} style={reportFrame(statsReportOn && !!statsReportPick['stat:dist']?.on)}>
                     <SecHead
                       title="성적 분포"
                       getTarget={() => distRef.current}
@@ -1859,13 +2950,11 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
                     </div>
                   </div>
                 )}
-                <div className="sec" ref={rankingRef}>
-                  <SecHead
-                    title="학생별 순위"
-                    getTarget={() => rankingRef.current}
-                    filename={`${stats.title}_학생순위`}
-                    onError={showToast}
-                  />
+                <div className="sec" ref={rankingRef} style={reportFrame(statsReportOn && !!statsReportPick['stat:rank']?.on)}>
+                  <div className="sec-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <span>학생별 순위</span>
+                    <RankingExcelButton stats={stats} onError={showToast} />
+                  </div>
                   <div data-skip-capture="" style={{ fontSize: 12, color: 'var(--slate2)', marginBottom: 8 }}>학생을 누르면 회차별 꺾은선 그래프를 볼 수 있습니다.</div>
                   {(stats.ranking ?? []).map((r) => (
                     <div key={r.studentId} className="card" style={{ padding: '12px 14px', marginBottom: 8, cursor: 'pointer' }}

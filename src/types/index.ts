@@ -303,6 +303,14 @@ export interface ExamStats {
     score?: number | null
     rank?: number | null
     rankedCount?: number | null
+    classRank?: number | null
+    classAvg?: number | null
+    sections?: {
+      sectionId: number
+      name: string
+      score?: number | null
+      examAvg?: number | null
+    }[]
   }[]
 }
 
