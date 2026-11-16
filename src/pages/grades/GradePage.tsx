@@ -1029,7 +1029,7 @@ function StudentPartView({
     if (sections.length === 0) return null
     return (
       <div className="sec">
-        <div className="sec-title">세부영역 비교</div>
+        <div className="sec-title">세부영역비교(백분률환산점수)</div>
         <div className="card" style={{ padding: '20px 16px 16px', overflow: 'visible' }}>
           <ExamCompareBars
             size="large"
@@ -2473,7 +2473,7 @@ export function ExamShell({ mode }: { mode: 'regular' | 'daily' }) {
           {(shown?.sectionScores?.length ?? 0) > 0 && (
             <div className="sec" ref={studentSubjectRef} style={reportFrame(reportOn && !!reportPick['img:subject']?.on)}>
               <SecHead
-                title="세부영역 비교"
+                title="세부영역비교(백분률환산점수)"
                 getTarget={() => studentSubjectRef.current}
                 filename={`${history.studentName}_세부영역비교`}
                 onError={showToast}
